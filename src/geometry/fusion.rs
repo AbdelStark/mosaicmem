@@ -76,18 +76,50 @@ impl StreamingFusion {
     }
 
     /// Rebuild the KD-tree index from the current global cloud.
+    ///
+    /// Handles the edge case where too many points share identical coordinates
+    /// on one axis (kiddo bucket size limitation). In this case, a coarser
+    /// voxel downsample is applied to reduce duplication before rebuilding.
     pub fn rebuild_kdtree(&mut self) {
         if self.global_cloud.is_empty() {
             self.kdtree = None;
             return;
         }
 
-        let mut tree = KdTree::new();
-        for (i, point) in self.global_cloud.points.iter().enumerate() {
-            let pos = [point.position.x, point.position.y, point.position.z];
-            tree.add(&pos, i as u64);
+        match self.try_build_kdtree() {
+            Some(tree) => self.kdtree = Some(tree),
+            None => {
+                // Too many points with same position — downsample more aggressively
+                tracing::debug!(
+                    "KD-tree rebuild: deduplicating {} points with coarser voxel",
+                    self.global_cloud.len()
+                );
+                self.global_cloud = self.global_cloud.voxel_downsample(self.voxel_size * 2.0);
+                self.kdtree = self.try_build_kdtree();
+            }
         }
-        self.kdtree = Some(tree);
+    }
+
+    /// Attempt to build a KD-tree, returning None if kiddo panics due to
+    /// too many coincident points.
+    fn try_build_kdtree(&self) -> Option<KdTree<f32, 3>> {
+        use std::panic;
+        let points: Vec<([f32; 3], u64)> = self
+            .global_cloud
+            .points
+            .iter()
+            .enumerate()
+            .map(|(i, p)| ([p.position.x, p.position.y, p.position.z], i as u64))
+            .collect();
+
+        panic::catch_unwind(|| {
+            let mut tree = KdTree::new();
+            for (pos, id) in &points {
+                tree.add(pos, *id);
+            }
+            tree
+        })
+        .ok()
     }
 
     /// Query nearest neighbors within a radius.
