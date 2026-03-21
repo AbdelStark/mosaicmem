@@ -40,7 +40,12 @@ impl CameraPose {
     }
 
     /// Create a pose looking at a target point from a given position.
-    pub fn look_at(timestamp: f64, eye: &Point3<f32>, target: &Point3<f32>, up: &Vector3<f32>) -> Self {
+    pub fn look_at(
+        timestamp: f64,
+        eye: &Point3<f32>,
+        target: &Point3<f32>,
+        up: &Vector3<f32>,
+    ) -> Self {
         let rotation = Rotation3::look_at_rh(&(target - eye), up);
         let rotation = UnitQuaternion::from_rotation_matrix(&rotation);
         let translation = Translation3::from(eye.coords);
@@ -140,8 +145,9 @@ mod isometry_serde {
     {
         let data = IsometryData::deserialize(deserializer)?;
         let translation = Translation3::new(data.tx, data.ty, data.tz);
-        let rotation =
-            UnitQuaternion::from_quaternion(nalgebra::Quaternion::new(data.qw, data.qx, data.qy, data.qz));
+        let rotation = UnitQuaternion::from_quaternion(nalgebra::Quaternion::new(
+            data.qw, data.qx, data.qy, data.qz,
+        ));
         Ok(Isometry3::from_parts(translation, rotation))
     }
 }

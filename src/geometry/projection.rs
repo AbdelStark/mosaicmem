@@ -27,9 +27,8 @@ pub fn unproject_depth_map(
 
     let mut cloud = PointCloud3D::with_capacity(height * width);
 
-    for v in 0..height {
-        for u in 0..width {
-            let depth = depth_map[v][u];
+    for (v, depth_row) in depth_map.iter().enumerate().take(height) {
+        for (u, &depth) in depth_row.iter().enumerate().take(width) {
             if depth <= 0.0 || !depth.is_finite() {
                 continue;
             }
@@ -68,10 +67,10 @@ pub fn project_points(
         if cam_point.z <= 0.0 {
             continue;
         }
-        if let Some(pixel) = intrinsics.project(&cam_point) {
-            if intrinsics.is_in_bounds(&pixel) {
-                results.push((i, pixel, cam_point.z));
-            }
+        if let Some(pixel) = intrinsics.project(&cam_point)
+            && intrinsics.is_in_bounds(&pixel)
+        {
+            results.push((i, pixel, cam_point.z));
         }
     }
 
@@ -94,10 +93,10 @@ pub fn frustum_cull(
         if cam_point.z < near || cam_point.z > far {
             continue;
         }
-        if let Some(pixel) = intrinsics.project(&cam_point) {
-            if intrinsics.is_in_bounds(&pixel) {
-                visible.push(i);
-            }
+        if let Some(pixel) = intrinsics.project(&cam_point)
+            && intrinsics.is_in_bounds(&pixel)
+        {
+            visible.push(i);
         }
     }
 
@@ -107,7 +106,6 @@ pub fn frustum_cull(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use nalgebra::UnitQuaternion;
 
     #[test]
     fn test_unproject_depth_map() {
@@ -127,8 +125,8 @@ mod tests {
         let pose = CameraPose::identity(0.0);
 
         let points = vec![
-            Point3::new(0.0, 0.0, 5.0),   // in front
-            Point3::new(0.0, 0.0, -5.0),  // behind
+            Point3::new(0.0, 0.0, 5.0),  // in front
+            Point3::new(0.0, 0.0, -5.0), // behind
         ];
 
         let results = project_points(&points, &intrinsics, &pose);
@@ -142,10 +140,10 @@ mod tests {
         let pose = CameraPose::identity(0.0);
 
         let points = vec![
-            Point3::new(0.0, 0.0, 5.0),    // visible
-            Point3::new(0.0, 0.0, 0.05),   // too close
-            Point3::new(0.0, 0.0, 200.0),  // too far
-            Point3::new(0.0, 0.0, -1.0),   // behind
+            Point3::new(0.0, 0.0, 5.0),   // visible
+            Point3::new(0.0, 0.0, 0.05),  // too close
+            Point3::new(0.0, 0.0, 200.0), // too far
+            Point3::new(0.0, 0.0, -1.0),  // behind
         ];
 
         let visible = frustum_cull(&points, &intrinsics, &pose, 0.1, 100.0);

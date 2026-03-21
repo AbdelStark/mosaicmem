@@ -2,9 +2,8 @@
 ///
 /// RoPE encodes position information by rotating query/key vectors
 /// using position-dependent rotation matrices.
-
-/// Compute RoPE frequency tensor for a given dimension and max sequence length.
 ///
+/// Computes RoPE frequency tensor for a given dimension and max sequence length.
 /// Returns a Vec of (cos, sin) pairs for each position and dimension pair.
 pub struct RoPE {
     /// Embedding dimension (must be even).
@@ -19,7 +18,7 @@ pub struct RoPE {
 
 impl RoPE {
     pub fn new(dim: usize, max_seq_len: usize, base: f32) -> Self {
-        assert!(dim % 2 == 0, "RoPE dimension must be even");
+        assert!(dim.is_multiple_of(2), "RoPE dimension must be even");
         let half_dim = dim / 2;
 
         // Compute frequency bands

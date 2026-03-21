@@ -81,16 +81,19 @@ impl InferencePipeline {
         let mut latent = self.init_noise(latent_size);
 
         // Retrieve memory for the first pose (representative for the window)
-        let intrinsics = CameraIntrinsics::default_for_resolution(self.config.width, self.config.height);
+        let intrinsics =
+            CameraIntrinsics::default_for_resolution(self.config.width, self.config.height);
 
         let mosaic = if !poses.is_empty() {
-            self.retriever.retrieve(&self.memory_store, &poses[0], &intrinsics)
+            self.retriever
+                .retrieve(&self.memory_store, &poses[0], &intrinsics)
         } else {
             return Err(PipelineError::Config("No poses provided".to_string()));
         };
 
-        // Compose memory tokens
+        // Compose memory tokens for backbone conditioning
         let (memory_tokens, _) = mosaic.compose_tokens();
+        let has_memory = !memory_tokens.is_empty();
 
         // Denoising loop
         let timesteps = scheduler.inference_timesteps(self.config.num_inference_steps);
@@ -99,10 +102,10 @@ impl InferencePipeline {
 
             let condition = DiffusionCondition {
                 text_embedding: text_embedding.to_vec(),
-                memory_tokens: if memory_tokens.is_empty() {
-                    None
-                } else {
+                memory_tokens: if has_memory {
                     Some(memory_tokens.clone())
+                } else {
+                    None
                 },
                 memory_mask: None,
                 camera_rotations: None,
@@ -113,7 +116,47 @@ impl InferencePipeline {
                 .denoise_step(&latent, &shape, &condition)
                 .map_err(|e| PipelineError::Backbone(e.to_string()))?;
 
-            latent = scheduler.step(&predicted_noise, &latent, t);
+            // Apply memory cross-attention to modulate the denoised latent.
+            // The latent is reshaped into spatial tokens, cross-attended with
+            // memory patches, then reshaped back.
+            let denoised = scheduler.step(&predicted_noise, &latent, t);
+
+            if has_memory {
+                // Reshape denoised latent [C*T*H*W] into tokens [T*H*W, C]
+                let num_spatial = lat_t * lat_h * lat_w;
+                let mut tokens: Vec<Vec<f32>> = Vec::with_capacity(num_spatial);
+                for i in 0..num_spatial {
+                    let mut token = Vec::with_capacity(lat_c);
+                    for c in 0..lat_c {
+                        let idx = c * num_spatial + i;
+                        if idx < denoised.len() {
+                            token.push(denoised[idx]);
+                        }
+                    }
+                    // Pad to hidden_dim if needed
+                    token.resize(self.config.hidden_dim, 0.0);
+                    tokens.push(token);
+                }
+
+                // Run memory cross-attention
+                let attn_output =
+                    self.cross_attention
+                        .forward(&tokens, &mosaic, &poses[0], &intrinsics);
+
+                // Add residual: latent = denoised + cross_attention_output
+                // Only add back the latent channels (first lat_c dims of each token)
+                latent = denoised.clone();
+                for (i, attn_token) in attn_output.iter().enumerate().take(num_spatial) {
+                    for c in 0..lat_c {
+                        let idx = c * num_spatial + i;
+                        if idx < latent.len() && c < attn_token.len() {
+                            latent[idx] += attn_token[c];
+                        }
+                    }
+                }
+            } else {
+                latent = denoised;
+            }
         }
 
         // Decode latent to pixel space
@@ -147,7 +190,11 @@ impl InferencePipeline {
         let lat_c = lat_shape[1];
 
         // Add keyframes to memory
-        for (i, pose) in poses.iter().enumerate().step_by(self.config.keyframe_interval) {
+        for (i, pose) in poses
+            .iter()
+            .enumerate()
+            .step_by(self.config.keyframe_interval)
+        {
             if i >= t {
                 break;
             }

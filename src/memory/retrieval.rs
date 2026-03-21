@@ -65,7 +65,8 @@ impl MemoryRetriever {
 
         for patch in patches {
             let gx = ((patch.target_position.x / intrinsics.width as f32) * grid_w as f32) as usize;
-            let gy = ((patch.target_position.y / intrinsics.height as f32) * grid_h as f32) as usize;
+            let gy =
+                ((patch.target_position.y / intrinsics.height as f32) * grid_h as f32) as usize;
             if gx < grid_w && gy < grid_h {
                 coverage[gy][gx] = true;
             }

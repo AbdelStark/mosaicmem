@@ -5,8 +5,8 @@ use nalgebra::Matrix3;
 ///
 /// Computes a homography/affine transform between source and target views,
 /// then warps the latent feature grid using bilinear interpolation.
-
-/// Compute the homography between two camera views assuming a planar scene
+///
+/// Computes the homography between two camera views assuming a planar scene
 /// at a given depth.
 pub fn compute_planar_homography(
     source_pose: &CameraPose,

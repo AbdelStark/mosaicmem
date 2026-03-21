@@ -155,10 +155,7 @@ impl MosaicMemoryStore {
                     1.0
                 };
 
-                let cam_point = intrinsics.unproject(
-                    &Point2::new(center_u, center_v),
-                    depth,
-                );
+                let cam_point = intrinsics.unproject(&Point2::new(center_u, center_v), depth);
                 let world_center = c2w.transform_point(&cam_point);
 
                 let source_rect = [
@@ -250,8 +247,7 @@ impl MosaicMemoryStore {
 
     /// Delete patches from a specific frame.
     pub fn delete_frame(&mut self, frame_index: usize) {
-        self.patches
-            .retain(|p| p.source_frame != frame_index);
+        self.patches.retain(|p| p.source_frame != frame_index);
         self.rebuild_index();
     }
 
@@ -317,9 +313,6 @@ impl MosaicMemoryStore {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use nalgebra::UnitQuaternion;
-    use nalgebra::Vector3;
-
     fn make_store_with_patches() -> MosaicMemoryStore {
         let config = MemoryConfig {
             max_patches: 100,

@@ -32,9 +32,7 @@ impl CameraIntrinsics {
 
     /// Build 3x3 intrinsic matrix K.
     pub fn matrix(&self) -> Matrix3<f32> {
-        Matrix3::new(
-            self.fx, 0.0, self.cx, 0.0, self.fy, self.cy, 0.0, 0.0, 1.0,
-        )
+        Matrix3::new(self.fx, 0.0, self.cx, 0.0, self.fy, self.cy, 0.0, 0.0, 1.0)
     }
 
     /// Build inverse intrinsic matrix K^{-1}.

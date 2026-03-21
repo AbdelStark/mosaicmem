@@ -26,11 +26,7 @@ pub struct WarpedRoPE {
 }
 
 impl WarpedRoPE {
-    pub fn new(
-        dim_per_axis: usize,
-        spatial_resolution: usize,
-        temporal_resolution: usize,
-    ) -> Self {
+    pub fn new(dim_per_axis: usize, spatial_resolution: usize, temporal_resolution: usize) -> Self {
         Self {
             rope_u: RoPE::new(dim_per_axis, spatial_resolution, 10000.0),
             rope_v: RoPE::new(dim_per_axis, spatial_resolution, 10000.0),
@@ -77,11 +73,7 @@ impl WarpedRoPE {
     /// `positions`: [N, 3] warped (u, v, t) positions
     ///
     /// Returns rotated vectors.
-    pub fn rotate(
-        &self,
-        vectors: &[Vec<f32>],
-        positions: &[[usize; 3]],
-    ) -> Vec<Vec<f32>> {
+    pub fn rotate(&self, vectors: &[Vec<f32>], positions: &[[usize; 3]]) -> Vec<Vec<f32>> {
         assert_eq!(vectors.len(), positions.len());
         let dim_per_axis = self.rope_u.dim;
 

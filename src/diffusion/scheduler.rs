@@ -2,7 +2,7 @@
 ///
 /// Supports DDPM-style discrete scheduling and can be extended
 /// for DDIM, flow matching, etc.
-
+///
 /// Trait for noise schedulers.
 pub trait NoiseScheduler: Send + Sync {
     /// Get the number of timesteps.
@@ -15,12 +15,7 @@ pub trait NoiseScheduler: Send + Sync {
     fn add_noise(&self, clean: &[f32], noise: &[f32], timestep: usize) -> Vec<f32>;
 
     /// Remove predicted noise from a noisy sample (single step).
-    fn step(
-        &self,
-        predicted_noise: &[f32],
-        noisy: &[f32],
-        timestep: usize,
-    ) -> Vec<f32>;
+    fn step(&self, predicted_noise: &[f32], noisy: &[f32], timestep: usize) -> Vec<f32>;
 
     /// Get the sigma (noise level) at a given timestep.
     fn sigma(&self, timestep: usize) -> f32;
@@ -43,9 +38,7 @@ impl DDPMScheduler {
     /// Create a DDPM scheduler with a linear beta schedule.
     pub fn linear(num_timesteps: usize, beta_start: f32, beta_end: f32) -> Self {
         let betas: Vec<f32> = (0..num_timesteps)
-            .map(|t| {
-                beta_start + (beta_end - beta_start) * t as f32 / (num_timesteps - 1) as f32
-            })
+            .map(|t| beta_start + (beta_end - beta_start) * t as f32 / (num_timesteps - 1) as f32)
             .collect();
 
         let mut alphas_cumprod = Vec::with_capacity(num_timesteps);
@@ -71,9 +64,7 @@ impl DDPMScheduler {
                 * std::f32::consts::FRAC_PI_2)
                 .cos()
                 .powi(2);
-            let f_0 = (s / (1.0 + s) * std::f32::consts::FRAC_PI_2)
-                .cos()
-                .powi(2);
+            let f_0 = (s / (1.0 + s) * std::f32::consts::FRAC_PI_2).cos().powi(2);
             alphas_cumprod.push(f_t / f_0);
         }
 
@@ -113,12 +104,7 @@ impl NoiseScheduler for DDPMScheduler {
             .collect()
     }
 
-    fn step(
-        &self,
-        predicted_noise: &[f32],
-        noisy: &[f32],
-        timestep: usize,
-    ) -> Vec<f32> {
+    fn step(&self, predicted_noise: &[f32], noisy: &[f32], timestep: usize) -> Vec<f32> {
         let alpha_bar = self.alphas_cumprod[timestep];
         let sqrt_alpha = alpha_bar.sqrt();
         let sqrt_one_minus_alpha = (1.0 - alpha_bar).sqrt();
