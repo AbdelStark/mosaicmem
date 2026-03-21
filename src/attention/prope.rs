@@ -19,7 +19,10 @@ pub struct PRoPE {
 
 impl PRoPE {
     pub fn new(head_dim: usize, num_heads: usize, temporal_compression: usize) -> Self {
-        assert!(head_dim % 2 == 0, "Head dim must be even for PRoPE");
+        assert!(
+            head_dim.is_multiple_of(2),
+            "Head dim must be even for PRoPE"
+        );
         Self {
             head_dim,
             num_heads,

@@ -87,7 +87,10 @@ impl StreamingFusion {
         match &self.kdtree {
             Some(tree) => {
                 let results = tree.within_unsorted::<SquaredEuclidean>(center, radius * radius);
-                results.iter().map(|n| (n.item, n.distance.sqrt())).collect()
+                results
+                    .iter()
+                    .map(|n| (n.item, n.distance.sqrt()))
+                    .collect()
             }
             None => vec![],
         }
@@ -123,9 +126,6 @@ impl StreamingFusion {
 mod tests {
     use super::*;
     use crate::geometry::depth::SyntheticDepthEstimator;
-    use nalgebra::UnitQuaternion;
-    use nalgebra::Vector3;
-
     #[test]
     fn test_streaming_fusion() {
         let mut fusion = StreamingFusion::new(0.1);
@@ -151,7 +151,11 @@ mod tests {
         for i in 0..50 {
             let angle = i as f32 * 0.3;
             cloud.add_point(
-                nalgebra::Point3::new(angle.cos() * i as f32, angle.sin() * i as f32, i as f32 * 0.5),
+                nalgebra::Point3::new(
+                    angle.cos() * i as f32,
+                    angle.sin() * i as f32,
+                    i as f32 * 0.5,
+                ),
                 [0; 3],
             );
         }

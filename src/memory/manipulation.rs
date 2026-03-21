@@ -2,8 +2,8 @@ use crate::memory::store::{MosaicMemoryStore, Patch3D};
 use nalgebra::{Point3, Vector3};
 
 /// Memory manipulation operations for scene editing.
-
-/// Splice two memory stores horizontally (side-by-side scenes).
+///
+/// Splices two memory stores horizontally (side-by-side scenes).
 /// The `offset` determines the spatial separation between the two scenes.
 pub fn splice_horizontal(
     store_a: &MosaicMemoryStore,
@@ -40,11 +40,7 @@ pub fn flip_vertical(store: &MosaicMemoryStore) -> Vec<Patch3D> {
 }
 
 /// Erase patches within a 3D region (sphere).
-pub fn erase_region(
-    store: &MosaicMemoryStore,
-    center: &Point3<f32>,
-    radius: f32,
-) -> Vec<Patch3D> {
+pub fn erase_region(store: &MosaicMemoryStore, center: &Point3<f32>, radius: f32) -> Vec<Patch3D> {
     let r2 = radius * radius;
     store
         .patches
@@ -68,11 +64,7 @@ pub fn translate(store: &MosaicMemoryStore, offset: &Vector3<f32>) -> Vec<Patch3
 }
 
 /// Scale patches around a center point.
-pub fn scale(
-    store: &MosaicMemoryStore,
-    center: &Point3<f32>,
-    factor: f32,
-) -> Vec<Patch3D> {
+pub fn scale(store: &MosaicMemoryStore, center: &Point3<f32>, factor: f32) -> Vec<Patch3D> {
     store
         .patches
         .iter()

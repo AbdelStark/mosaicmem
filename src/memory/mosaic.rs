@@ -23,9 +23,7 @@ impl MosaicFrame {
 
     /// Check if the mosaic has any memory coverage.
     pub fn has_coverage(&self) -> bool {
-        self.coverage_mask
-            .iter()
-            .any(|row| row.iter().any(|&v| v))
+        self.coverage_mask.iter().any(|row| row.iter().any(|&v| v))
     }
 
     /// Compute coverage ratio (0..1).

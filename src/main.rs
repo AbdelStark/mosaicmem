@@ -1,6 +1,6 @@
 use clap::{Parser, Subcommand};
-use std::path::PathBuf;
-use tracing::{info, error};
+use std::path::{Path, PathBuf};
+use tracing::{error, info};
 use tracing_subscriber::EnvFilter;
 
 use mosaicmem_rs::camera::{CameraPose, CameraTrajectory};
@@ -91,6 +91,32 @@ enum Commands {
         offset: f32,
     },
 
+    /// Inspect a trajectory and show memory/geometry analysis.
+    Inspect {
+        /// Camera trajectory JSON file.
+        #[arg(short, long)]
+        trajectory: PathBuf,
+
+        /// Video width (for projection calculations).
+        #[arg(long, default_value_t = 256)]
+        width: u32,
+
+        /// Video height (for projection calculations).
+        #[arg(long, default_value_t = 256)]
+        height: u32,
+
+        /// Show per-frame memory coverage analysis.
+        #[arg(long)]
+        coverage: bool,
+    },
+
+    /// Dump or load pipeline configuration as JSON.
+    ShowConfig {
+        /// Optional JSON config file to load. If omitted, prints default config.
+        #[arg(short, long)]
+        config: Option<PathBuf>,
+    },
+
     /// Run a demo with synthetic data (no ONNX models required).
     Demo {
         /// Number of frames to generate.
@@ -113,7 +139,9 @@ enum Commands {
 
 fn main() {
     tracing_subscriber::fmt()
-        .with_env_filter(EnvFilter::from_default_env().add_directive("mosaicmem_rs=info".parse().unwrap()))
+        .with_env_filter(
+            EnvFilter::from_default_env().add_directive("mosaicmem_rs=info".parse().unwrap()),
+        )
         .init();
 
     let cli = Cli::parse();
@@ -130,17 +158,17 @@ fn main() {
             window_overlap,
             seed,
         } => {
-            if let Err(e) = cmd_generate(
-                &trajectory,
-                &prompt,
-                &output,
+            if let Err(e) = cmd_generate(&GenerateArgs {
+                trajectory_path: &trajectory,
+                prompt: &prompt,
+                output_dir: &output,
                 width,
                 height,
                 steps,
                 window_size,
                 window_overlap,
                 seed,
-            ) {
+            }) {
                 error!("Generation failed: {}", e);
                 std::process::exit(1);
             }
@@ -162,6 +190,23 @@ fn main() {
                 std::process::exit(1);
             }
         }
+        Commands::Inspect {
+            trajectory,
+            width,
+            height,
+            coverage,
+        } => {
+            if let Err(e) = cmd_inspect(&trajectory, width, height, coverage) {
+                error!("Inspect failed: {}", e);
+                std::process::exit(1);
+            }
+        }
+        Commands::ShowConfig { config } => {
+            if let Err(e) = cmd_show_config(config.as_deref()) {
+                error!("Config failed: {}", e);
+                std::process::exit(1);
+            }
+        }
         Commands::Demo {
             num_frames,
             width,
@@ -176,17 +221,30 @@ fn main() {
     }
 }
 
-fn cmd_generate(
-    trajectory_path: &PathBuf,
-    prompt: &str,
-    output_dir: &PathBuf,
+struct GenerateArgs<'a> {
+    trajectory_path: &'a Path,
+    prompt: &'a str,
+    output_dir: &'a Path,
     width: u32,
     height: u32,
     steps: usize,
     window_size: usize,
     window_overlap: usize,
     seed: u64,
-) -> Result<(), Box<dyn std::error::Error>> {
+}
+
+fn cmd_generate(args: &GenerateArgs) -> Result<(), Box<dyn std::error::Error>> {
+    let GenerateArgs {
+        trajectory_path,
+        prompt,
+        output_dir,
+        width,
+        height,
+        steps,
+        window_size,
+        window_overlap,
+        seed,
+    } = args;
     info!("Loading trajectory from {:?}", trajectory_path);
     let trajectory = CameraTrajectory::load_json(trajectory_path)?;
     info!("Loaded {} poses", trajectory.len());
@@ -194,12 +252,12 @@ fn cmd_generate(
     std::fs::create_dir_all(output_dir)?;
 
     let config = PipelineConfig {
-        num_inference_steps: steps,
-        width,
-        height,
-        window_size,
-        window_overlap,
-        seed,
+        num_inference_steps: *steps,
+        width: *width,
+        height: *height,
+        window_size: *window_size,
+        window_overlap: *window_overlap,
+        seed: *seed,
         ..Default::default()
     };
 
@@ -240,7 +298,7 @@ fn cmd_generate(
     Ok(())
 }
 
-fn cmd_visualize(trajectory_path: &PathBuf) -> Result<(), Box<dyn std::error::Error>> {
+fn cmd_visualize(trajectory_path: &Path) -> Result<(), Box<dyn std::error::Error>> {
     let trajectory = CameraTrajectory::load_json(trajectory_path)?;
     info!("Trajectory: {} poses", trajectory.len());
     info!("Duration: {:.2}s", trajectory.duration());
@@ -261,8 +319,8 @@ fn cmd_visualize(trajectory_path: &PathBuf) -> Result<(), Box<dyn std::error::Er
 }
 
 fn cmd_splice(
-    trajectory_a: &PathBuf,
-    trajectory_b: &PathBuf,
+    trajectory_a: &Path,
+    trajectory_b: &Path,
     layout: &str,
     offset: f32,
 ) -> Result<(), Box<dyn std::error::Error>> {
@@ -303,7 +361,10 @@ fn cmd_demo(
     steps: usize,
 ) -> Result<(), Box<dyn std::error::Error>> {
     info!("=== MosaicMem Demo (Synthetic Models) ===");
-    info!("Frames: {}, Resolution: {}x{}, Steps: {}", num_frames, width, height, steps);
+    info!(
+        "Frames: {}, Resolution: {}x{}, Steps: {}",
+        num_frames, width, height, steps
+    );
 
     // Create a circular camera trajectory
     use nalgebra::{Point3, Vector3};
@@ -368,5 +429,175 @@ fn cmd_demo(
     info!("Translated: {} patches", translated.len());
 
     info!("=== Demo Complete ===");
+    Ok(())
+}
+
+fn cmd_inspect(
+    trajectory_path: &Path,
+    width: u32,
+    height: u32,
+    show_coverage: bool,
+) -> Result<(), Box<dyn std::error::Error>> {
+    use mosaicmem_rs::camera::CameraIntrinsics;
+    use mosaicmem_rs::diffusion::vae::VAE;
+    use mosaicmem_rs::geometry::depth::DepthEstimator;
+    use mosaicmem_rs::geometry::fusion::StreamingFusion;
+    use mosaicmem_rs::memory::retrieval::MemoryRetriever;
+
+    info!("=== MosaicMem Trajectory Inspector ===");
+    let trajectory = CameraTrajectory::load_json(trajectory_path)?;
+    info!("Trajectory: {} poses", trajectory.len());
+    info!("Duration: {:.2}s", trajectory.duration());
+    info!("Path length: {:.2} units", trajectory.path_length());
+
+    // Keyframe analysis
+    let keyframes_motion = trajectory.select_keyframes(0.5, 0.1);
+    let keyframes_uniform = trajectory.select_keyframes(0.0, 0.0);
+    info!(
+        "Keyframes: {} (motion-based), {} (uniform)",
+        keyframes_motion.len(),
+        keyframes_uniform.len()
+    );
+
+    // Build a synthetic memory store to analyze spatial coverage
+    let intrinsics = CameraIntrinsics::default_for_resolution(width, height);
+    let depth_estimator = SyntheticDepthEstimator::new(5.0, 1.0);
+
+    let mut fusion = StreamingFusion::new(0.05);
+    let memory_config = MemoryConfig {
+        max_patches: 10000,
+        top_k: 64,
+        ..Default::default()
+    };
+    let mut store = MosaicMemoryStore::new(memory_config);
+    let vae = SyntheticVAE::new(8, 4, 16);
+
+    // Process keyframes to build memory
+    info!("--- Building synthetic memory from trajectory ---");
+    for &ki in &keyframes_motion {
+        if ki >= trajectory.len() {
+            continue;
+        }
+        let pose = &trajectory.poses[ki];
+
+        // Generate synthetic frame data
+        let frame_pixels = (width * height * 3) as usize;
+        let frame_data = vec![128u8; frame_pixels];
+
+        let depth_map = depth_estimator.estimate_depth(&frame_data, width, height)?;
+
+        // Add to fusion
+        let _ = fusion.add_keyframe(
+            &frame_data,
+            width,
+            height,
+            &intrinsics,
+            pose,
+            &depth_estimator,
+        );
+
+        // Encode to latent and insert into memory
+        let frame_f32: Vec<f32> = frame_data.iter().map(|&b| b as f32 / 255.0).collect();
+        let frame_shape = [1, 3, 1, height as usize, width as usize];
+        let (latents, lat_shape) = vae.encode(&frame_f32, &frame_shape)?;
+        let lat_h = lat_shape[3];
+        let lat_w = lat_shape[4];
+        let lat_c = lat_shape[1];
+
+        store.insert_keyframe(
+            ki,
+            pose.timestamp,
+            &latents,
+            lat_h,
+            lat_w,
+            lat_c,
+            &depth_map,
+            &intrinsics,
+            pose,
+        );
+    }
+
+    info!("--- Memory Statistics ---");
+    info!("Stored patches: {}", store.num_patches());
+    info!("Total tokens: {}", store.total_tokens());
+    info!("Point cloud size: {} points", fusion.num_points());
+    info!("Keyframes processed: {}", fusion.num_keyframes);
+
+    // Spatial extent analysis
+    if !store.patches.is_empty() {
+        let (mut min_x, mut min_y, mut min_z) = (f32::MAX, f32::MAX, f32::MAX);
+        let (mut max_x, mut max_y, mut max_z) = (f32::MIN, f32::MIN, f32::MIN);
+        for p in &store.patches {
+            min_x = min_x.min(p.center.x);
+            min_y = min_y.min(p.center.y);
+            min_z = min_z.min(p.center.z);
+            max_x = max_x.max(p.center.x);
+            max_y = max_y.max(p.center.y);
+            max_z = max_z.max(p.center.z);
+        }
+        info!(
+            "Spatial extent: ({:.2}, {:.2}, {:.2}) to ({:.2}, {:.2}, {:.2})",
+            min_x, min_y, min_z, max_x, max_y, max_z
+        );
+        info!(
+            "Bounding box size: {:.2} x {:.2} x {:.2}",
+            max_x - min_x,
+            max_y - min_y,
+            max_z - min_z
+        );
+    }
+
+    // Per-frame coverage analysis
+    if show_coverage {
+        info!("--- Per-Frame Coverage Analysis ---");
+        let retriever = MemoryRetriever::new();
+        for (i, pose) in trajectory.poses.iter().enumerate() {
+            let mosaic = retriever.retrieve(&store, pose, &intrinsics);
+            let coverage = mosaic.coverage_ratio();
+            let bar_len = (coverage * 40.0) as usize;
+            let bar: String = "#".repeat(bar_len) + &".".repeat(40 - bar_len);
+            println!(
+                "Frame {:4}: coverage={:.1}% patches={:3} [{}]",
+                i,
+                coverage * 100.0,
+                mosaic.num_patches(),
+                bar
+            );
+        }
+    }
+
+    info!("=== Inspection Complete ===");
+    Ok(())
+}
+
+fn cmd_show_config(config_path: Option<&Path>) -> Result<(), Box<dyn std::error::Error>> {
+    let config = if let Some(path) = config_path {
+        info!("Loading config from {:?}", path);
+        let contents = std::fs::read_to_string(path)?;
+        let config: PipelineConfig = serde_json::from_str(&contents)?;
+        config
+    } else {
+        PipelineConfig::default()
+    };
+
+    let json = serde_json::to_string_pretty(&config)?;
+    println!("{json}");
+
+    // Also show derived dimensions
+    println!("\n# Derived dimensions:");
+    println!(
+        "#   Latent size: {}x{}",
+        config.latent_height(),
+        config.latent_width()
+    );
+    println!("#   Latent frames: {}", config.latent_frames());
+    println!(
+        "#   Latent elements per window: {}",
+        config.latent_channels
+            * config.latent_frames()
+            * config.latent_height()
+            * config.latent_width()
+    );
+
     Ok(())
 }

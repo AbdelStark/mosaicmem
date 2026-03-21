@@ -91,13 +91,10 @@ impl AutoregressivePipeline {
             )?;
 
             // Update memory with generated frames
-            if let Err(e) = self.pipeline.update_memory(
-                &frames,
-                &shape,
-                window_poses,
-                depth_estimator,
-                vae,
-            ) {
+            if let Err(e) =
+                self.pipeline
+                    .update_memory(&frames, &shape, window_poses, depth_estimator, vae)
+            {
                 warn!("Memory update failed for window {}: {}", window_idx, e);
             }
 
@@ -136,10 +133,10 @@ impl AutoregressivePipeline {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::camera::CameraPose;
     use crate::diffusion::backbone::SyntheticBackbone;
     use crate::diffusion::scheduler::DDPMScheduler;
     use crate::diffusion::vae::SyntheticVAE;
-    use crate::camera::CameraPose;
     use crate::geometry::depth::SyntheticDepthEstimator;
     use nalgebra::{UnitQuaternion, Vector3};
 
