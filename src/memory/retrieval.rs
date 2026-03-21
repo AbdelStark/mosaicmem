@@ -49,7 +49,21 @@ impl MemoryRetriever {
         target_pose: &CameraPose,
         intrinsics: &CameraIntrinsics,
     ) -> MosaicFrame {
-        let mut patches = store.retrieve(target_pose, intrinsics);
+        self.retrieve_at_time(store, target_pose, intrinsics, None)
+    }
+
+    /// Retrieve a MosaicFrame with temporal decay applied.
+    ///
+    /// When `query_time` is provided, patches receive exponentially decayed
+    /// visibility scores based on their age relative to the query time.
+    pub fn retrieve_at_time(
+        &self,
+        store: &MosaicMemoryStore,
+        target_pose: &CameraPose,
+        intrinsics: &CameraIntrinsics,
+        query_time: Option<f64>,
+    ) -> MosaicFrame {
+        let mut patches = store.retrieve_at_time(target_pose, intrinsics, query_time);
 
         // Filter by minimum visibility
         patches.retain(|p| p.visibility_score >= self.min_visibility);

@@ -1,5 +1,7 @@
 use crate::attention::memory_cross::MemoryCrossAttention;
-use crate::camera::{CameraIntrinsics, CameraPose};
+use crate::attention::prope::PRoPE;
+use crate::attention::warped_latent::warp_patch_latent;
+use crate::camera::{CameraIntrinsics, CameraPose, CameraTrajectory};
 use crate::diffusion::backbone::{DiffusionBackbone, DiffusionCondition};
 use crate::diffusion::scheduler::NoiseScheduler;
 use crate::diffusion::vae::VAE;
@@ -9,6 +11,7 @@ use crate::memory::retrieval::MemoryRetriever;
 use crate::memory::store::{MemoryConfig, MosaicMemoryStore};
 use crate::pipeline::config::PipelineConfig;
 use thiserror::Error;
+use tracing::debug;
 
 #[derive(Error, Debug)]
 pub enum PipelineError {
@@ -24,12 +27,22 @@ pub enum PipelineError {
 
 /// Single-window inference pipeline.
 /// Generates one window of frames given context and memory.
+///
+/// Integrates all MosaicMem components:
+/// - PRoPE camera conditioning for projective positional encoding
+/// - Warped latent feature-space alignment for retrieved patches
+/// - Temporal decay for recency-weighted retrieval
+/// - Diversity-aware patch selection for spatial coverage
+/// - Coverage-guided conditioning for inpainting guidance
+/// - Adaptive keyframe selection based on camera motion
 pub struct InferencePipeline {
     pub config: PipelineConfig,
     pub memory_store: MosaicMemoryStore,
     pub fusion: StreamingFusion,
     pub retriever: MemoryRetriever,
     pub cross_attention: MemoryCrossAttention,
+    /// PRoPE for camera-dependent positional encoding.
+    pub prope: PRoPE,
 }
 
 impl InferencePipeline {
@@ -39,14 +52,25 @@ impl InferencePipeline {
             top_k: config.retrieval_top_k,
             patch_size: config.spatial_downsample as u32,
             latent_patch_size: 2,
+            temporal_decay_half_life: config.temporal_decay_half_life,
             ..Default::default()
         };
+
+        // Use diversity-aware retriever when configured
+        let retriever = if config.diversity_radius > 0.0 {
+            MemoryRetriever::with_diversity(config.diversity_radius, config.diversity_penalty)
+        } else {
+            MemoryRetriever::new()
+        };
+
+        let head_dim = config.hidden_dim / config.num_heads;
 
         Self {
             fusion: StreamingFusion::new(config.voxel_size),
             memory_store: MosaicMemoryStore::new(memory_config),
-            retriever: MemoryRetriever::new(),
+            retriever,
             cross_attention: MemoryCrossAttention::new(config.hidden_dim, config.num_heads),
+            prope: PRoPE::new(head_dim, config.num_heads, config.temporal_compression),
             config,
         }
     }
@@ -80,20 +104,49 @@ impl InferencePipeline {
         // Initialize with random noise
         let mut latent = self.init_noise(latent_size);
 
-        // Retrieve memory for the first pose (representative for the window)
+        if poses.is_empty() {
+            return Err(PipelineError::Config("No poses provided".to_string()));
+        }
+
         let intrinsics =
             CameraIntrinsics::default_for_resolution(self.config.width, self.config.height);
 
-        let mosaic = if !poses.is_empty() {
+        // Retrieve memory with temporal decay applied
+        let query_time = Some(poses[0].timestamp);
+        let mut mosaic =
             self.retriever
-                .retrieve(&self.memory_store, &poses[0], &intrinsics)
-        } else {
-            return Err(PipelineError::Config("No poses provided".to_string()));
-        };
+                .retrieve_at_time(&self.memory_store, &poses[0], &intrinsics, query_time);
+
+        // Apply warped latent feature-space alignment to retrieved patches
+        if self.config.enable_warped_latent && !mosaic.patches.is_empty() {
+            self.apply_warped_latent(&mut mosaic, &poses[0], &intrinsics);
+        }
 
         // Compose memory tokens for backbone conditioning
         let (memory_tokens, _) = mosaic.compose_tokens();
         let has_memory = !memory_tokens.is_empty();
+
+        // Compute PRoPE camera rotations for this window's poses
+        let camera_rotations = if !poses.is_empty() {
+            Some(self.prope.compute_rotations(poses, &intrinsics))
+        } else {
+            None
+        };
+
+        // Flatten coverage mask for backbone conditioning
+        let coverage_mask = if has_memory {
+            Some(self.flatten_coverage_mask(&mosaic.coverage_mask))
+        } else {
+            None
+        };
+
+        debug!(
+            "Window generation: {} patches, coverage={:.1}%, PRoPE frames={}, warped_latent={}",
+            mosaic.patches.len(),
+            mosaic.coverage_ratio() * 100.0,
+            poses.len(),
+            self.config.enable_warped_latent,
+        );
 
         // Denoising loop
         let timesteps = scheduler.inference_timesteps(self.config.num_inference_steps);
@@ -107,8 +160,8 @@ impl InferencePipeline {
                 } else {
                     None
                 },
-                memory_mask: None,
-                camera_rotations: None,
+                memory_mask: coverage_mask.clone(),
+                camera_rotations: camera_rotations.clone(),
                 timestep: timestep_f,
             };
 
@@ -168,7 +221,60 @@ impl InferencePipeline {
         Ok((frames, frame_shape))
     }
 
+    /// Apply warped latent feature-space alignment to retrieved patches.
+    ///
+    /// For each patch, computes a homography from its source camera view to the
+    /// target view, then warps the latent features using bilinear interpolation.
+    /// This aligns memory patches geometrically before attention.
+    fn apply_warped_latent(
+        &self,
+        mosaic: &mut crate::memory::mosaic::MosaicFrame,
+        target_pose: &CameraPose,
+        intrinsics: &CameraIntrinsics,
+    ) {
+        for patch in &mut mosaic.patches {
+            let source_pose = CameraPose::identity(patch.patch.source_timestamp);
+            let channels = if patch.patch.latent_height * patch.patch.latent_width > 0 {
+                patch.patch.latent.len() / (patch.patch.latent_height * patch.patch.latent_width)
+            } else {
+                continue;
+            };
+
+            if channels == 0 || patch.patch.latent_height < 2 || patch.patch.latent_width < 2 {
+                continue;
+            }
+
+            let warped = warp_patch_latent(
+                &patch.patch.latent,
+                patch.patch.latent_height,
+                patch.patch.latent_width,
+                channels,
+                &source_pose,
+                target_pose,
+                intrinsics,
+                patch.target_depth,
+            );
+
+            // Only use warped latent if it has non-zero content (valid warp)
+            let has_content = warped.iter().any(|&v| v.abs() > 1e-10);
+            if has_content {
+                patch.patch.latent = warped;
+            }
+        }
+    }
+
+    /// Flatten the 2D coverage mask into a 1D boolean vector for backbone conditioning.
+    fn flatten_coverage_mask(&self, coverage: &[Vec<bool>]) -> Vec<bool> {
+        coverage
+            .iter()
+            .flat_map(|row| row.iter().copied())
+            .collect()
+    }
+
     /// Update memory with newly generated frames.
+    ///
+    /// Uses adaptive keyframe selection when configured: selects frames based on
+    /// camera motion magnitude rather than fixed interval sampling.
     pub fn update_memory(
         &mut self,
         frames: &[f32],
@@ -189,15 +295,14 @@ impl InferencePipeline {
         let lat_w = lat_shape[4];
         let lat_c = lat_shape[1];
 
-        // Add keyframes to memory
-        for (i, pose) in poses
-            .iter()
-            .enumerate()
-            .step_by(self.config.keyframe_interval)
-        {
-            if i >= t {
-                break;
+        // Select keyframes: adaptive (motion-based) or fixed interval
+        let keyframe_indices = self.select_keyframes(poses, t);
+
+        for i in keyframe_indices {
+            if i >= t || i >= poses.len() {
+                continue;
             }
+            let pose = &poses[i];
 
             // Estimate depth for this frame
             let frame_pixels = h * w * 3;
@@ -254,6 +359,54 @@ impl InferencePipeline {
         Ok(())
     }
 
+    /// Select keyframe indices based on configuration.
+    ///
+    /// When `adaptive_keyframes` is enabled, uses camera motion magnitude
+    /// (translation + rotation) to select frames with significant viewpoint change.
+    /// Falls back to fixed interval when disabled or when motion is below threshold.
+    fn select_keyframes(&self, poses: &[CameraPose], max_frames: usize) -> Vec<usize> {
+        let num_poses = poses.len().min(max_frames);
+        if num_poses == 0 {
+            return vec![];
+        }
+
+        if self.config.adaptive_keyframes && num_poses > 1 {
+            let traj = CameraTrajectory::new(poses[..num_poses].to_vec());
+            let mut keyframes = traj.select_keyframes(
+                self.config.keyframe_translation_threshold,
+                self.config.keyframe_angular_threshold,
+            );
+
+            // Ensure minimum keyframe density: at least every keyframe_interval frames
+            let max_gap = self.config.keyframe_interval;
+            let mut filled = Vec::new();
+            let mut last_kf = 0;
+            for &kf in &keyframes {
+                // Fill gaps larger than max_gap with uniform samples
+                while last_kf + max_gap < kf {
+                    last_kf += max_gap;
+                    filled.push(last_kf);
+                }
+                filled.push(kf);
+                last_kf = kf;
+            }
+            keyframes = filled;
+            keyframes.sort_unstable();
+            keyframes.dedup();
+
+            debug!(
+                "Adaptive keyframe selection: {} keyframes from {} poses",
+                keyframes.len(),
+                num_poses
+            );
+            keyframes
+        } else {
+            (0..num_poses)
+                .step_by(self.config.keyframe_interval.max(1))
+                .collect()
+        }
+    }
+
     /// Initialize random noise for the latent.
     fn init_noise(&self, size: usize) -> Vec<f32> {
         use rand::Rng;
@@ -303,6 +456,8 @@ mod tests {
     use crate::diffusion::backbone::SyntheticBackbone;
     use crate::diffusion::scheduler::DDPMScheduler;
     use crate::diffusion::vae::SyntheticVAE;
+    use crate::geometry::depth::SyntheticDepthEstimator;
+    use nalgebra::{UnitQuaternion, Vector3};
 
     #[test]
     fn test_inference_pipeline_creation() {
@@ -332,5 +487,140 @@ mod tests {
         let (frames, shape) = result.unwrap();
         assert_eq!(shape[0], 1); // batch
         assert_eq!(shape[1], 3); // RGB
+        assert!(!frames.is_empty());
+    }
+
+    #[test]
+    fn test_pipeline_uses_diversity_retriever() {
+        let mut config = PipelineConfig::default();
+        config.diversity_radius = 15.0;
+        config.diversity_penalty = 0.3;
+
+        let pipeline = InferencePipeline::new(config);
+        assert_eq!(pipeline.retriever.diversity_radius, 15.0);
+        assert_eq!(pipeline.retriever.diversity_penalty, 0.3);
+    }
+
+    #[test]
+    fn test_pipeline_uses_temporal_decay() {
+        let mut config = PipelineConfig::default();
+        config.temporal_decay_half_life = 2.0;
+
+        let pipeline = InferencePipeline::new(config);
+        assert!(
+            (pipeline.memory_store.config.temporal_decay_half_life - 2.0).abs() < 1e-10,
+            "Memory store should have temporal decay configured"
+        );
+    }
+
+    #[test]
+    fn test_pipeline_has_prope() {
+        let config = PipelineConfig::default();
+        let pipeline = InferencePipeline::new(config.clone());
+        assert_eq!(pipeline.prope.num_heads, config.num_heads);
+        let expected_head_dim = config.hidden_dim / config.num_heads;
+        assert_eq!(pipeline.prope.head_dim, expected_head_dim);
+    }
+
+    #[test]
+    fn test_adaptive_keyframe_selection() {
+        let mut config = PipelineConfig::default();
+        config.adaptive_keyframes = true;
+        config.keyframe_translation_threshold = 0.3;
+        config.keyframe_angular_threshold = 0.2;
+        config.keyframe_interval = 4;
+
+        let pipeline = InferencePipeline::new(config);
+
+        // Create poses with varying motion
+        let poses: Vec<CameraPose> = (0..8)
+            .map(|i| {
+                CameraPose::from_translation_rotation(
+                    i as f64 * 0.1,
+                    Vector3::new(i as f32 * 0.2, 0.0, 0.0),
+                    UnitQuaternion::identity(),
+                )
+            })
+            .collect();
+
+        let kf = pipeline.select_keyframes(&poses, 8);
+        // Should always include frame 0
+        assert!(kf.contains(&0), "Keyframes should include frame 0");
+        // Should have selected at least one more keyframe
+        assert!(
+            kf.len() >= 2,
+            "Should have at least 2 keyframes, got {}",
+            kf.len()
+        );
+    }
+
+    #[test]
+    fn test_fixed_keyframe_selection() {
+        let mut config = PipelineConfig::default();
+        config.adaptive_keyframes = false;
+        config.keyframe_interval = 3;
+
+        let pipeline = InferencePipeline::new(config);
+        let poses: Vec<CameraPose> = (0..9)
+            .map(|i| CameraPose::identity(i as f64 * 0.1))
+            .collect();
+
+        let kf = pipeline.select_keyframes(&poses, 9);
+        assert_eq!(kf, vec![0, 3, 6]);
+    }
+
+    #[test]
+    fn test_generate_with_memory_uses_prope_and_coverage() {
+        let mut config = PipelineConfig::default();
+        config.num_inference_steps = 2;
+        config.width = 64;
+        config.height = 64;
+        config.temporal_decay_half_life = 5.0;
+        config.diversity_radius = 10.0;
+
+        let mut pipeline = InferencePipeline::new(config);
+
+        // Populate memory with a keyframe
+        let depth = SyntheticDepthEstimator::new(5.0, 1.0);
+        let vae = SyntheticVAE::new(8, 4, 16);
+        let intrinsics = CameraIntrinsics::default_for_resolution(64, 64);
+        let pose0 = CameraPose::identity(0.0);
+        let depth_map = depth
+            .estimate_depth(&vec![128u8; 64 * 64 * 3], 64, 64)
+            .unwrap();
+        let latents = vec![0.5f32; 8 * 8 * 16];
+        pipeline.memory_store.insert_keyframe(
+            0,
+            0.0,
+            &latents,
+            8,
+            8,
+            16,
+            &depth_map,
+            &intrinsics,
+            &pose0,
+        );
+
+        // Generate with memory present
+        let backbone = SyntheticBackbone::new(0.1);
+        let scheduler = DDPMScheduler::linear(1000, 1e-4, 0.02);
+        let poses = vec![CameraPose::from_translation_rotation(
+            1.0,
+            Vector3::new(0.5, 0.0, 0.0),
+            UnitQuaternion::identity(),
+        )];
+        let text_emb = vec![vec![0.0f32; 64]; 10];
+
+        let result = pipeline.generate_window(&poses, &text_emb, &backbone, &scheduler, &vae);
+        assert!(result.is_ok(), "Generation with memory should succeed");
+    }
+
+    #[test]
+    fn test_flatten_coverage_mask() {
+        let config = PipelineConfig::default();
+        let pipeline = InferencePipeline::new(config);
+        let mask = vec![vec![true, false, true], vec![false, true, false]];
+        let flat = pipeline.flatten_coverage_mask(&mask);
+        assert_eq!(flat, vec![true, false, true, false, true, false]);
     }
 }

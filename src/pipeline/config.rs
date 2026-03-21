@@ -33,6 +33,23 @@ pub struct PipelineConfig {
     pub depth_base: f32,
     /// Random seed.
     pub seed: u64,
+    /// Spatial diversity radius in target 2D pixels for retrieval.
+    /// Set to 0.0 to disable diversity filtering.
+    pub diversity_radius: f32,
+    /// Diversity penalty factor (0..1). Score is multiplied by this for nearby patches.
+    pub diversity_penalty: f32,
+    /// Temporal decay half-life in seconds. 0.0 disables decay.
+    pub temporal_decay_half_life: f64,
+    /// Use adaptive keyframe selection based on camera motion.
+    pub adaptive_keyframes: bool,
+    /// Translation threshold for adaptive keyframe selection.
+    pub keyframe_translation_threshold: f32,
+    /// Angular threshold (radians) for adaptive keyframe selection.
+    pub keyframe_angular_threshold: f32,
+    /// Temporal compression factor for PRoPE (e.g. 4 frames → 1 latent frame).
+    pub temporal_compression: usize,
+    /// Enable warped latent feature-space alignment.
+    pub enable_warped_latent: bool,
 }
 
 impl Default for PipelineConfig {
@@ -55,6 +72,14 @@ impl Default for PipelineConfig {
             voxel_size: 0.05,
             depth_base: 5.0,
             seed: 42,
+            diversity_radius: 20.0,
+            diversity_penalty: 0.5,
+            temporal_decay_half_life: 5.0,
+            adaptive_keyframes: true,
+            keyframe_translation_threshold: 0.5,
+            keyframe_angular_threshold: 0.3,
+            temporal_compression: 4,
+            enable_warped_latent: true,
         }
     }
 }
