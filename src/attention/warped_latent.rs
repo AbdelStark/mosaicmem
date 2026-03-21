@@ -94,6 +94,7 @@ pub fn warp_latent(
 }
 
 /// High-level warp function: compute homography and apply warping.
+#[allow(clippy::too_many_arguments)]
 pub fn warp_patch_latent(
     latent: &[f32],
     height: usize,

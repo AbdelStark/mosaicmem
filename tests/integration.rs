@@ -471,6 +471,7 @@ fn test_memory_config_json_roundtrip() {
         far_clip: 200.0,
         patch_size: 32,
         latent_patch_size: 4,
+        temporal_decay_half_life: 0.0,
     };
 
     let json = serde_json::to_string(&config).unwrap();

@@ -120,6 +120,135 @@ impl PointCloud3D {
             .collect();
         PointCloud3D::from_points(points)
     }
+
+    /// Export the point cloud to PLY format (ASCII).
+    pub fn export_ply(&self, path: &std::path::Path) -> Result<(), std::io::Error> {
+        use std::io::Write;
+        let mut f = std::io::BufWriter::new(std::fs::File::create(path)?);
+
+        // PLY header
+        writeln!(f, "ply")?;
+        writeln!(f, "format ascii 1.0")?;
+        writeln!(f, "element vertex {}", self.points.len())?;
+        writeln!(f, "property float x")?;
+        writeln!(f, "property float y")?;
+        writeln!(f, "property float z")?;
+        writeln!(f, "property uchar red")?;
+        writeln!(f, "property uchar green")?;
+        writeln!(f, "property uchar blue")?;
+        if self.points.iter().any(|p| p.normal.is_some()) {
+            writeln!(f, "property float nx")?;
+            writeln!(f, "property float ny")?;
+            writeln!(f, "property float nz")?;
+        }
+        writeln!(f, "end_header")?;
+
+        let has_normals = self.points.iter().any(|p| p.normal.is_some());
+        for p in &self.points {
+            if has_normals {
+                let n = p.normal.unwrap_or(nalgebra::Vector3::zeros());
+                writeln!(
+                    f,
+                    "{} {} {} {} {} {} {} {} {}",
+                    p.position.x,
+                    p.position.y,
+                    p.position.z,
+                    p.color[0],
+                    p.color[1],
+                    p.color[2],
+                    n.x,
+                    n.y,
+                    n.z
+                )?;
+            } else {
+                writeln!(
+                    f,
+                    "{} {} {} {} {} {}",
+                    p.position.x, p.position.y, p.position.z, p.color[0], p.color[1], p.color[2]
+                )?;
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Import a point cloud from a PLY file (ASCII format).
+    pub fn import_ply(path: &std::path::Path) -> Result<Self, std::io::Error> {
+        use std::io::BufRead;
+        let file = std::io::BufReader::new(std::fs::File::open(path)?);
+        let mut lines = file.lines();
+
+        // Parse header
+        let mut num_vertices: usize = 0;
+        let mut has_normals = false;
+        let mut in_header = true;
+
+        while in_header {
+            let line = lines.next().ok_or_else(|| {
+                std::io::Error::new(std::io::ErrorKind::InvalidData, "Unexpected end of header")
+            })??;
+            let trimmed = line.trim();
+            if trimmed.starts_with("element vertex") {
+                if let Some(count_str) = trimmed.split_whitespace().nth(2) {
+                    num_vertices = count_str.parse().map_err(|_| {
+                        std::io::Error::new(std::io::ErrorKind::InvalidData, "Invalid vertex count")
+                    })?;
+                }
+            } else if trimmed == "property float nx" {
+                has_normals = true;
+            } else if trimmed == "end_header" {
+                in_header = false;
+            }
+        }
+
+        // Parse vertices
+        let mut points = Vec::with_capacity(num_vertices);
+        for line_result in lines.take(num_vertices) {
+            let line = line_result?;
+            let parts: Vec<&str> = line.split_whitespace().collect();
+            if parts.len() < 6 {
+                continue;
+            }
+
+            let parse_f32 = |s: &str| -> Result<f32, std::io::Error> {
+                s.parse()
+                    .map_err(|_| std::io::Error::new(std::io::ErrorKind::InvalidData, "Bad float"))
+            };
+            let parse_u8 = |s: &str| -> Result<u8, std::io::Error> {
+                s.parse()
+                    .map_err(|_| std::io::Error::new(std::io::ErrorKind::InvalidData, "Bad u8"))
+            };
+
+            let position = nalgebra::Point3::new(
+                parse_f32(parts[0])?,
+                parse_f32(parts[1])?,
+                parse_f32(parts[2])?,
+            );
+            let color = [
+                parse_u8(parts[3])?,
+                parse_u8(parts[4])?,
+                parse_u8(parts[5])?,
+            ];
+
+            let normal = if has_normals && parts.len() >= 9 {
+                Some(nalgebra::Vector3::new(
+                    parse_f32(parts[6])?,
+                    parse_f32(parts[7])?,
+                    parse_f32(parts[8])?,
+                ))
+            } else {
+                None
+            };
+
+            points.push(Point3DColored {
+                position,
+                color,
+                normal,
+            });
+        }
+
+        Ok(Self { points })
+    }
 }
 
 impl Default for PointCloud3D {
@@ -169,5 +298,66 @@ mod tests {
         cloud2.add_point(Point3::new(1.0, 1.0, 1.0), [0; 3]);
         cloud1.merge(&cloud2);
         assert_eq!(cloud1.len(), 2);
+    }
+
+    #[test]
+    fn test_ply_export_import_roundtrip() {
+        let mut cloud = PointCloud3D::new();
+        cloud.add_point(Point3::new(1.0, 2.0, 3.0), [255, 0, 0]);
+        cloud.add_point(Point3::new(4.0, 5.0, 6.0), [0, 255, 0]);
+        cloud.add_point(Point3::new(7.0, 8.0, 9.0), [0, 0, 255]);
+
+        let dir = std::env::temp_dir().join("mosaicmem_test_ply");
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("test.ply");
+
+        cloud.export_ply(&path).unwrap();
+
+        let loaded = PointCloud3D::import_ply(&path).unwrap();
+        assert_eq!(loaded.len(), 3);
+
+        // Check values roundtrip
+        for (orig, loaded_p) in cloud.points.iter().zip(loaded.points.iter()) {
+            assert!((orig.position.x - loaded_p.position.x).abs() < 1e-5);
+            assert!((orig.position.y - loaded_p.position.y).abs() < 1e-5);
+            assert!((orig.position.z - loaded_p.position.z).abs() < 1e-5);
+            assert_eq!(orig.color, loaded_p.color);
+        }
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn test_ply_empty_cloud() {
+        let cloud = PointCloud3D::new();
+        let dir = std::env::temp_dir().join("mosaicmem_test_ply_empty");
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("empty.ply");
+
+        cloud.export_ply(&path).unwrap();
+        let loaded = PointCloud3D::import_ply(&path).unwrap();
+        assert_eq!(loaded.len(), 0);
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn test_centroid() {
+        let mut cloud = PointCloud3D::new();
+        cloud.add_point(Point3::new(0.0, 0.0, 0.0), [0; 3]);
+        cloud.add_point(Point3::new(2.0, 4.0, 6.0), [0; 3]);
+        let centroid = cloud.centroid().unwrap();
+        assert!((centroid.x - 1.0).abs() < 1e-5);
+        assert!((centroid.y - 2.0).abs() < 1e-5);
+        assert!((centroid.z - 3.0).abs() < 1e-5);
+    }
+
+    #[test]
+    fn test_filter_sphere() {
+        let mut cloud = PointCloud3D::new();
+        cloud.add_point(Point3::new(0.0, 0.0, 0.0), [0; 3]);
+        cloud.add_point(Point3::new(10.0, 0.0, 0.0), [0; 3]);
+        let filtered = cloud.filter_sphere(&Point3::origin(), 5.0);
+        assert_eq!(filtered.len(), 1);
     }
 }
