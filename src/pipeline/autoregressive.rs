@@ -43,6 +43,7 @@ impl AutoregressivePipeline {
     ///
     /// # Returns
     /// All generated frames concatenated + stats
+    #[allow(clippy::too_many_arguments)]
     pub fn generate(
         &mut self,
         trajectory: &CameraTrajectory,

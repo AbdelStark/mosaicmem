@@ -51,6 +51,10 @@ pub struct MemoryConfig {
     pub patch_size: u32,
     /// Latent patch size (after VAE encoding).
     pub latent_patch_size: u32,
+    /// Temporal decay half-life in seconds. Patches older than this
+    /// relative to the query time have their visibility score halved.
+    /// Set to 0.0 to disable temporal decay.
+    pub temporal_decay_half_life: f64,
 }
 
 impl Default for MemoryConfig {
@@ -62,8 +66,20 @@ impl Default for MemoryConfig {
             far_clip: 100.0,
             patch_size: 16,
             latent_patch_size: 2,
+            temporal_decay_half_life: 0.0,
         }
     }
+}
+
+/// Serializable snapshot of a MosaicMemoryStore (without the KD-tree).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MemorySnapshot {
+    /// All stored patches.
+    pub patches: Vec<Patch3D>,
+    /// Configuration.
+    pub config: MemoryConfig,
+    /// Next patch ID.
+    pub next_id: u64,
 }
 
 /// The Mosaic Memory Store: 3D patch storage with spatial indexing.
@@ -78,6 +94,19 @@ pub struct MosaicMemoryStore {
     next_id: u64,
 }
 
+/// Parameters for inserting a keyframe into the memory store.
+pub struct KeyframeParams<'a> {
+    pub frame_index: usize,
+    pub timestamp: f64,
+    pub latents: &'a [f32],
+    pub latent_h: usize,
+    pub latent_w: usize,
+    pub channels: usize,
+    pub depth_map: &'a [Vec<f32>],
+    pub intrinsics: &'a CameraIntrinsics,
+    pub pose: &'a CameraPose,
+}
+
 impl MosaicMemoryStore {
     pub fn new(config: MemoryConfig) -> Self {
         Self {
@@ -88,18 +117,74 @@ impl MosaicMemoryStore {
         }
     }
 
+    /// Save the memory store to a JSON file.
+    pub fn save_json(&self, path: &std::path::Path) -> Result<(), std::io::Error> {
+        let snapshot = MemorySnapshot {
+            patches: self.patches.clone(),
+            config: self.config.clone(),
+            next_id: self.next_id,
+        };
+        let json = serde_json::to_string_pretty(&snapshot)
+            .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
+        std::fs::write(path, json)
+    }
+
+    /// Load a memory store from a JSON file.
+    pub fn load_json(path: &std::path::Path) -> Result<Self, std::io::Error> {
+        let json = std::fs::read_to_string(path)?;
+        let snapshot: MemorySnapshot = serde_json::from_str(&json)
+            .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
+        let mut store = Self {
+            patches: snapshot.patches,
+            kdtree: None,
+            config: snapshot.config,
+            next_id: snapshot.next_id,
+        };
+        store.rebuild_index();
+        Ok(store)
+    }
+
+    /// Create a serializable snapshot of the current state.
+    pub fn snapshot(&self) -> MemorySnapshot {
+        MemorySnapshot {
+            patches: self.patches.clone(),
+            config: self.config.clone(),
+            next_id: self.next_id,
+        }
+    }
+
+    /// Restore from a snapshot.
+    pub fn from_snapshot(snapshot: MemorySnapshot) -> Self {
+        let mut store = Self {
+            patches: snapshot.patches,
+            kdtree: None,
+            config: snapshot.config,
+            next_id: snapshot.next_id,
+        };
+        store.rebuild_index();
+        store
+    }
+
     /// Insert a keyframe: split the frame into patches and store them.
     ///
     /// # Arguments
-    /// * `frame_index` - Frame index in the video sequence
-    /// * `timestamp` - Timestamp of the frame
-    /// * `latents` - Flattened latent features for the entire frame (H_lat x W_lat x C)
-    /// * `latent_h` - Latent height
-    /// * `latent_w` - Latent width
-    /// * `channels` - Number of latent channels
-    /// * `depth_map` - HxW depth map
-    /// * `intrinsics` - Camera intrinsics
-    /// * `pose` - Camera pose
+    /// * `params` - Keyframe parameters (frame index, timestamp, latent data, depth, camera)
+    pub fn insert_keyframe_params(&mut self, params: &KeyframeParams) -> Vec<u64> {
+        self.insert_keyframe(
+            params.frame_index,
+            params.timestamp,
+            params.latents,
+            params.latent_h,
+            params.latent_w,
+            params.channels,
+            params.depth_map,
+            params.intrinsics,
+            params.pose,
+        )
+    }
+
+    /// Insert a keyframe: split the frame into patches and store them.
+    #[allow(clippy::too_many_arguments)]
     pub fn insert_keyframe(
         &mut self,
         frame_index: usize,
@@ -197,6 +282,19 @@ impl MosaicMemoryStore {
         target_pose: &CameraPose,
         intrinsics: &CameraIntrinsics,
     ) -> Vec<RetrievedPatch> {
+        self.retrieve_at_time(target_pose, intrinsics, None)
+    }
+
+    /// Retrieve patches visible from a target camera pose with optional temporal decay.
+    ///
+    /// When `query_time` is provided and `temporal_decay_half_life > 0`, patches
+    /// older relative to the query time receive exponentially decayed scores.
+    pub fn retrieve_at_time(
+        &self,
+        target_pose: &CameraPose,
+        intrinsics: &CameraIntrinsics,
+        query_time: Option<f64>,
+    ) -> Vec<RetrievedPatch> {
         if self.patches.is_empty() {
             return vec![];
         }
@@ -211,6 +309,8 @@ impl MosaicMemoryStore {
             self.config.far_clip,
         );
 
+        let half_life = self.config.temporal_decay_half_life;
+
         // Score and rank visible patches
         let mut candidates: Vec<RetrievedPatch> = visible_indices
             .iter()
@@ -223,7 +323,16 @@ impl MosaicMemoryStore {
                 let center_dist = ((pixel.x - intrinsics.cx) / intrinsics.width as f32).powi(2)
                     + ((pixel.y - intrinsics.cy) / intrinsics.height as f32).powi(2);
                 let depth_score = 1.0 / (1.0 + cam_point.z * 0.1);
-                let visibility_score = (1.0 - center_dist.sqrt()).max(0.0) * depth_score;
+                let mut visibility_score = (1.0 - center_dist.sqrt()).max(0.0) * depth_score;
+
+                // Apply temporal decay if configured
+                if half_life > 0.0
+                    && let Some(qt) = query_time
+                {
+                    let age = (qt - patch.source_timestamp).max(0.0);
+                    let decay = (0.5_f64).powf(age / half_life) as f32;
+                    visibility_score *= decay;
+                }
 
                 Some(RetrievedPatch {
                     patch: patch.clone(),
@@ -356,5 +465,113 @@ mod tests {
         let store = make_store_with_patches();
         let results = store.query_nearest(&Point3::new(0.0, 0.0, 5.0), 3);
         assert!(!results.is_empty());
+    }
+
+    #[test]
+    fn test_save_load_json_roundtrip() {
+        let store = make_store_with_patches();
+        let initial_count = store.num_patches();
+        assert!(initial_count > 0);
+
+        let dir = std::env::temp_dir().join("mosaicmem_test_save_load");
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("memory.json");
+
+        store.save_json(&path).unwrap();
+
+        let loaded = MosaicMemoryStore::load_json(&path).unwrap();
+        assert_eq!(loaded.num_patches(), initial_count);
+        assert_eq!(loaded.config.max_patches, store.config.max_patches);
+
+        // Verify KD-tree was rebuilt
+        let results = loaded.query_nearest(&Point3::new(0.0, 0.0, 5.0), 3);
+        assert!(!results.is_empty());
+
+        // Cleanup
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn test_snapshot_roundtrip() {
+        let store = make_store_with_patches();
+        let snapshot = store.snapshot();
+        let restored = MosaicMemoryStore::from_snapshot(snapshot);
+        assert_eq!(restored.num_patches(), store.num_patches());
+    }
+
+    #[test]
+    fn test_temporal_decay_retrieval() {
+        let config = MemoryConfig {
+            max_patches: 100,
+            top_k: 10,
+            temporal_decay_half_life: 1.0, // 1 second half-life
+            ..Default::default()
+        };
+        let mut store = MosaicMemoryStore::new(config);
+
+        let intrinsics = CameraIntrinsics::new(100.0, 100.0, 50.0, 50.0, 100, 100);
+        let pose = CameraPose::identity(0.0);
+        let depth_map = vec![vec![5.0f32; 10]; 10];
+        let latents = vec![0.5f32; 4 * 4 * 4];
+
+        // Insert at time 0
+        store.insert_keyframe(0, 0.0, &latents, 4, 4, 4, &depth_map, &intrinsics, &pose);
+        assert!(store.num_patches() > 0);
+
+        // Retrieve at time 0 — no decay
+        let query = CameraPose::identity(0.0);
+        let at_t0 = store.retrieve_at_time(&query, &intrinsics, Some(0.0));
+
+        // Retrieve at time 10 — significant decay
+        let at_t10 = store.retrieve_at_time(&query, &intrinsics, Some(10.0));
+
+        if !at_t0.is_empty() && !at_t10.is_empty() {
+            // Scores at t=10 should be lower than at t=0
+            let max_t0 = at_t0
+                .iter()
+                .map(|p| p.visibility_score)
+                .fold(0.0f32, f32::max);
+            let max_t10 = at_t10
+                .iter()
+                .map(|p| p.visibility_score)
+                .fold(0.0f32, f32::max);
+            assert!(
+                max_t10 < max_t0,
+                "Temporal decay should reduce scores: t0={} t10={}",
+                max_t0,
+                max_t10
+            );
+        }
+    }
+
+    #[test]
+    fn test_insert_keyframe_params() {
+        let config = MemoryConfig {
+            max_patches: 100,
+            top_k: 10,
+            ..Default::default()
+        };
+        let mut store = MosaicMemoryStore::new(config);
+
+        let intrinsics = CameraIntrinsics::new(100.0, 100.0, 50.0, 50.0, 100, 100);
+        let pose = CameraPose::identity(0.0);
+        let depth_map = vec![vec![5.0f32; 10]; 10];
+        let latents = vec![0.5f32; 4 * 4 * 4];
+
+        let params = KeyframeParams {
+            frame_index: 0,
+            timestamp: 0.0,
+            latents: &latents,
+            latent_h: 4,
+            latent_w: 4,
+            channels: 4,
+            depth_map: &depth_map,
+            intrinsics: &intrinsics,
+            pose: &pose,
+        };
+
+        let ids = store.insert_keyframe_params(&params);
+        assert!(!ids.is_empty());
+        assert!(store.num_patches() > 0);
     }
 }
