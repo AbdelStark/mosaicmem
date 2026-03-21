@@ -1,0 +1,27 @@
+[package]
+name = "mosaicmem-rs"
+version = "0.1.0"
+edition = "2024"
+description = "Rust implementation of MosaicMem: Hybrid Spatial Memory for Video World Models"
+license = "MIT"
+
+[[bin]]
+name = "mosaicmem-rs"
+path = "src/main.rs"
+
+[dependencies]
+nalgebra = { version = "0.33", features = ["serde-serialize"] }
+ndarray = "0.16"
+image = "0.25"
+rayon = "1.10"
+kiddo = "4"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+clap = { version = "4", features = ["derive"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+thiserror = "2.0"
+rand = "0.8"
+
+[dev-dependencies]
+approx = "0.5"
