@@ -73,3 +73,51 @@ impl PipelineConfig {
         (self.window_size / self.temporal_downsample).max(1)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_default_config_dimensions() {
+        let config = PipelineConfig::default();
+        assert_eq!(config.latent_height(), 32); // 256 / 8
+        assert_eq!(config.latent_width(), 32); // 256 / 8
+        assert_eq!(config.latent_frames(), 4); // 16 / 4
+    }
+
+    #[test]
+    fn test_custom_config_dimensions() {
+        let config = PipelineConfig {
+            width: 512,
+            height: 256,
+            spatial_downsample: 8,
+            window_size: 32,
+            temporal_downsample: 4,
+            ..Default::default()
+        };
+        assert_eq!(config.latent_height(), 32); // 256 / 8
+        assert_eq!(config.latent_width(), 64); // 512 / 8
+        assert_eq!(config.latent_frames(), 8); // 32 / 4
+    }
+
+    #[test]
+    fn test_latent_frames_min_one() {
+        let config = PipelineConfig {
+            window_size: 1,
+            temporal_downsample: 4,
+            ..Default::default()
+        };
+        // 1 / 4 = 0, clamped to 1
+        assert_eq!(config.latent_frames(), 1);
+    }
+
+    #[test]
+    fn test_config_serialization() {
+        let config = PipelineConfig::default();
+        let json = serde_json::to_string(&config).unwrap();
+        let deserialized: PipelineConfig = serde_json::from_str(&json).unwrap();
+        assert_eq!(deserialized.width, config.width);
+        assert_eq!(deserialized.seed, config.seed);
+    }
+}

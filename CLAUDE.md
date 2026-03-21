@@ -64,7 +64,7 @@ src/
 |----------------|-----------------------------------|--------------------------------------|
 | Build          | `cargo build`                     | ~44s first build, ~3s incremental    |
 | Build release  | `cargo build --release`           | Optimized binary                     |
-| Test all       | `cargo test`                      | 46 tests, runs in <1s                |
+| Test all       | `cargo test`                      | 80+ tests (unit + integration), <1s  |
 | Test module    | `cargo test camera::`             | Filter by module path                |
 | Test verbose   | `cargo test -- --nocapture`       | Show println/tracing output          |
 | Check          | `cargo check`                     | Type-check without codegen (fastest) |
@@ -122,7 +122,7 @@ src/
   3. Implement types/traits in the appropriate module file
   4. Add `pub use` re-exports in the module's mod.rs
   5. Write `#[cfg(test)] mod tests` with at least 3 unit tests
-  6. Run `cargo test` — all 46+ tests must pass
+  6. Run `cargo test` — all 80+ tests must pass
   7. Run `cargo clippy` — resolve all warnings
   8. Run `cargo fmt` — ensure consistent formatting
   9. If adding CLI functionality, update main.rs Commands enum

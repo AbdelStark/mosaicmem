@@ -83,4 +83,24 @@ mod tests {
         // Center should be close to base_depth
         assert!((depth[5][5] - 5.0).abs() < 1.0);
     }
+
+    #[test]
+    fn test_synthetic_depth_all_positive() {
+        let estimator = SyntheticDepthEstimator::new(1.0, 0.5);
+        let depth = estimator.estimate_depth(&[0u8; 48], 4, 4).unwrap();
+        for row in &depth {
+            for &d in row {
+                assert!(d > 0.0, "All depth values should be positive");
+                assert!(d.is_finite(), "All depth values should be finite");
+            }
+        }
+    }
+
+    #[test]
+    fn test_synthetic_depth_1x1() {
+        let estimator = SyntheticDepthEstimator::new(3.0, 1.0);
+        let depth = estimator.estimate_depth(&[0u8; 3], 1, 1).unwrap();
+        assert_eq!(depth.len(), 1);
+        assert_eq!(depth[0].len(), 1);
+    }
 }

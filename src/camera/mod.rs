@@ -4,4 +4,4 @@ pub mod trajectory;
 
 pub use intrinsics::CameraIntrinsics;
 pub use pose::CameraPose;
-pub use trajectory::CameraTrajectory;
+pub use trajectory::{CameraTrajectory, TrajectoryError};
