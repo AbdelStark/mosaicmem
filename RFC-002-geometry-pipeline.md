@@ -1,0 +1,2 @@
+# RFC-002: Geometry Pipeline
+Monocular depth estimation via Tract (ONNX model). Depth unprojection: pixel (u,v,d) → 3D point via camera intrinsics. Streaming point cloud fusion: per-keyframe depth → unproject → voxel dedup → merge into global cloud → rebuild KD-tree index. Frustum culling for visibility queries. Key types: DepthEstimator (Tract ONNX wrapper), unproject_depth() function, StreamingFusion (incremental cloud builder with voxel grid filtering).

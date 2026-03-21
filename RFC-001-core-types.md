@@ -1,0 +1,2 @@
+# RFC-001: Core Types
+Camera (SE3 via nalgebra Isometry3), CameraIntrinsics (fx/fy/cx/cy), PointCloud3D, Patch3D (3D center + source frame + patch coords + latent features), MosaicFrame (target pose + retrieved patches + coverage mask), RetrievedPatch (aligned patch with warped coords), StreamingPointCloud (points + KD-tree), MosaicMemConfig. Uses nalgebra for all 3D math, Burn tensors for neural features, kiddo KD-tree for spatial indexing.

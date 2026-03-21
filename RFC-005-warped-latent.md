@@ -1,0 +1,2 @@
+# RFC-005: Warped Latent
+Complement to Warped RoPE: directly warp latent features in feature space. Compute geometric correspondence (source 2D → 3D → target 2D), build affine/homography transform, apply to latent feature grid via bilinear sampling (grid_sample). Trade-off: better camera motion accuracy but slightly lower visual quality than Warped RoPE. Full MosaicMem uses BOTH methods. Bilinear sampling implementation needed for sub-pixel interpolation. Key function: warp(patch_latents, source_pose, target_pose, depth, intrinsics) → warped_latents.
