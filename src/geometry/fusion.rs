@@ -1,8 +1,16 @@
 use crate::camera::{CameraIntrinsics, CameraPose};
-use crate::geometry::depth::DepthEstimator;
+use crate::geometry::depth::{DepthError, DepthEstimator};
 use crate::geometry::pointcloud::PointCloud3D;
 use crate::geometry::projection::unproject_depth_map;
 use kiddo::{KdTree, SquaredEuclidean};
+use thiserror::Error;
+
+/// Errors that can occur during streaming fusion.
+#[derive(Error, Debug)]
+pub enum FusionError {
+    #[error("Depth estimation failed during fusion: {0}")]
+    DepthFailed(#[from] DepthError),
+}
 
 /// Streaming point cloud fusion: incrementally builds a global 3D point cloud
 /// from incoming frames with depth estimation.
@@ -36,7 +44,7 @@ impl StreamingFusion {
         intrinsics: &CameraIntrinsics,
         pose: &CameraPose,
         depth_estimator: &dyn DepthEstimator,
-    ) -> Result<usize, Box<dyn std::error::Error>> {
+    ) -> Result<usize, FusionError> {
         // Estimate depth
         let depth_map = depth_estimator.estimate_depth(image, width, height)?;
 

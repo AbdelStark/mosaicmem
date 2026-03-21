@@ -36,9 +36,14 @@ pub struct DDPMScheduler {
 
 impl DDPMScheduler {
     /// Create a DDPM scheduler with a linear beta schedule.
+    ///
+    /// # Panics
+    /// Panics if `num_timesteps` is 0.
     pub fn linear(num_timesteps: usize, beta_start: f32, beta_end: f32) -> Self {
+        assert!(num_timesteps > 0, "num_timesteps must be > 0");
+        let denom = (num_timesteps.max(2) - 1) as f32;
         let betas: Vec<f32> = (0..num_timesteps)
-            .map(|t| beta_start + (beta_end - beta_start) * t as f32 / (num_timesteps - 1) as f32)
+            .map(|t| beta_start + (beta_end - beta_start) * t as f32 / denom)
             .collect();
 
         let mut alphas_cumprod = Vec::with_capacity(num_timesteps);
@@ -127,6 +132,9 @@ impl NoiseScheduler for DDPMScheduler {
     }
 
     fn inference_timesteps(&self, num_steps: usize) -> Vec<usize> {
+        if num_steps == 0 {
+            return vec![];
+        }
         let step_size = self.num_train_timesteps / num_steps;
         (0..num_steps)
             .map(|i| self.num_train_timesteps - 1 - i * step_size)
@@ -176,5 +184,27 @@ mod tests {
         let scheduler = DDPMScheduler::cosine(1000);
         assert_eq!(scheduler.num_timesteps(), 1000);
         assert!(scheduler.alphas_cumprod[0] > scheduler.alphas_cumprod[999]);
+    }
+
+    #[test]
+    fn test_sigma_increases() {
+        let scheduler = DDPMScheduler::linear(1000, 1e-4, 0.02);
+        // Sigma should increase with timestep (more noise at higher t)
+        let sigma_low = scheduler.sigma(10);
+        let sigma_high = scheduler.sigma(900);
+        assert!(
+            sigma_high > sigma_low,
+            "Sigma should increase: {} > {}",
+            sigma_high,
+            sigma_low
+        );
+    }
+
+    #[test]
+    fn test_alphas_cumprod_bounds() {
+        let scheduler = DDPMScheduler::linear(1000, 1e-4, 0.02);
+        for &ac in scheduler.alphas_cumprod() {
+            assert!(ac > 0.0 && ac <= 1.0, "Alpha_cumprod out of (0,1]: {}", ac);
+        }
     }
 }

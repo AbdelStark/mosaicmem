@@ -8,7 +8,7 @@ MosaicMem bridges explicit 3D memory and implicit latent memory for video world 
 > **Project:** [mosaicmem.github.io](https://mosaicmem.github.io/mosaicmem/)
 > **Demo:** [YouTube](https://www.youtube.com/watch?v=K3Q9kf8t08I)
 
-Built with **Burn** (neural ops, attention) + **Tract** (ONNX inference) + **nalgebra** (3D geometry).
+Inference-only pipeline built with **nalgebra** (3D geometry) + **kiddo** (spatial indexing) + **ndarray** (tensor ops). Trait-based backends allow plugging in real ONNX models when available.
 
 ## The Core Idea
 
@@ -73,7 +73,7 @@ Target Viewpoint → [Point-to-Frame Retrieval] ←─────────�
 
 ## License
 
-MIT OR Apache-2.0
+MIT
 
 ## Citation
 

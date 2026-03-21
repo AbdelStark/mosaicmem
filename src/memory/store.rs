@@ -370,8 +370,11 @@ impl MosaicMemoryStore {
     fn enforce_budget(&mut self) {
         if self.patches.len() > self.config.max_patches {
             // Remove oldest patches first
-            self.patches
-                .sort_by(|a, b| b.source_timestamp.partial_cmp(&a.source_timestamp).unwrap());
+            self.patches.sort_by(|a, b| {
+                b.source_timestamp
+                    .partial_cmp(&a.source_timestamp)
+                    .unwrap_or(std::cmp::Ordering::Equal)
+            });
             self.patches.truncate(self.config.max_patches);
         }
     }

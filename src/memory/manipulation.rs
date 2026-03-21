@@ -122,4 +122,39 @@ mod tests {
         let erased = erase_region(&store, &Point3::origin(), 1000.0);
         assert!(erased.len() < initial || initial == 0);
     }
+
+    #[test]
+    fn test_translate() {
+        let store = make_store();
+        let offset = Vector3::new(10.0, 5.0, -3.0);
+        let translated = translate(&store, &offset);
+        assert_eq!(translated.len(), store.num_patches());
+        for (orig, t) in store.patches.iter().zip(translated.iter()) {
+            assert!((t.center.x - orig.center.x - 10.0).abs() < 1e-5);
+            assert!((t.center.y - orig.center.y - 5.0).abs() < 1e-5);
+            assert!((t.center.z - orig.center.z + 3.0).abs() < 1e-5);
+        }
+    }
+
+    #[test]
+    fn test_scale() {
+        let store = make_store();
+        let center = Point3::new(0.0, 0.0, 0.0);
+        let scaled = scale(&store, &center, 2.0);
+        assert_eq!(scaled.len(), store.num_patches());
+        for (orig, s) in store.patches.iter().zip(scaled.iter()) {
+            // Each point should be 2x farther from the center
+            let orig_dist = (orig.center - center).norm();
+            let scaled_dist = (s.center - center).norm();
+            assert!((scaled_dist - orig_dist * 2.0).abs() < 1e-4);
+        }
+    }
+
+    #[test]
+    fn test_erase_region_preserves_distant_patches() {
+        let store = make_store();
+        // Use a tiny radius — should preserve all patches that aren't at the origin
+        let erased = erase_region(&store, &Point3::new(1000.0, 1000.0, 1000.0), 0.01);
+        assert_eq!(erased.len(), store.num_patches());
+    }
 }

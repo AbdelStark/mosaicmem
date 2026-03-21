@@ -360,4 +360,23 @@ mod tests {
         let filtered = cloud.filter_sphere(&Point3::origin(), 5.0);
         assert_eq!(filtered.len(), 1);
     }
+
+    #[test]
+    fn test_empty_cloud_operations() {
+        let cloud = PointCloud3D::new();
+        assert!(cloud.is_empty());
+        assert!(cloud.bounding_box().is_none());
+        assert!(cloud.centroid().is_none());
+        assert_eq!(cloud.positions().len(), 0);
+        let filtered = cloud.filter_sphere(&Point3::origin(), 10.0);
+        assert!(filtered.is_empty());
+        let downsampled = cloud.voxel_downsample(1.0);
+        assert!(downsampled.is_empty());
+    }
+
+    #[test]
+    fn test_default() {
+        let cloud = PointCloud3D::default();
+        assert!(cloud.is_empty());
+    }
 }
