@@ -532,6 +532,60 @@ fn cmd_demo(
     let translated = manipulation::translate(store, &Vector3::new(10.0, 0.0, 0.0));
     info!("Translated: {} patches", translated.len());
 
+    // Write output artifacts
+    let demo_dir = std::path::PathBuf::from("demo_output");
+    std::fs::create_dir_all(&demo_dir)?;
+
+    // Save point cloud
+    let ply_path = demo_dir.join("scene.ply");
+    pipeline
+        .pipeline
+        .fusion
+        .global_cloud
+        .export_ply(&ply_path)?;
+    info!(
+        "Point cloud exported: {:?} ({} points)",
+        ply_path,
+        pipeline.pipeline.fusion.num_points()
+    );
+
+    // Save memory store
+    let mem_path = demo_dir.join("memory.json");
+    pipeline.pipeline.memory_store.save_json(&mem_path)?;
+    info!(
+        "Memory saved: {:?} ({} patches)",
+        mem_path,
+        store.num_patches()
+    );
+
+    // Save trajectory
+    let traj_path = demo_dir.join("trajectory.json");
+    trajectory.save_json(&traj_path)?;
+    info!("Trajectory saved: {:?}", traj_path);
+
+    // Save sample frames
+    let mut frame_offset = 0;
+    for (win_idx, shape) in shapes.iter().enumerate() {
+        let [_b, c, t, h, w] = *shape;
+        let frame_size = c * h * w;
+        for f_idx in 0..t {
+            let start = frame_offset + f_idx * frame_size;
+            let end = start + frame_size;
+            if end > frames.len() {
+                break;
+            }
+            write_frame_png(
+                &frames[start..end],
+                w as u32,
+                h as u32,
+                c,
+                &demo_dir.join(format!("frame_{:04}_{:02}.png", win_idx, f_idx)),
+            )?;
+        }
+        frame_offset += t * frame_size;
+    }
+    info!("Frames written to {:?}/", demo_dir);
+
     info!("=== Demo Complete ===");
     Ok(())
 }
