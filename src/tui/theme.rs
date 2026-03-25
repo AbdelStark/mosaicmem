@@ -10,11 +10,13 @@ pub const EMERALD: Color = Color::Rgb(0, 255, 136);
 pub const CORAL: Color = Color::Rgb(255, 107, 107);
 pub const LAVENDER: Color = Color::Rgb(167, 139, 250);
 pub const PEACH: Color = Color::Rgb(255, 182, 139);
+pub const ROSE: Color = Color::Rgb(244, 114, 182);
 
-pub const SURFACE: Color = Color::Rgb(15, 18, 30);
-pub const SURFACE_BRIGHT: Color = Color::Rgb(24, 32, 48);
+pub const SURFACE: Color = Color::Rgb(12, 14, 24);
+pub const SURFACE_1: Color = Color::Rgb(20, 26, 42);
+pub const SURFACE_2: Color = Color::Rgb(28, 36, 56);
 pub const SLATE: Color = Color::Rgb(100, 116, 139);
-pub const DIM: Color = Color::Rgb(45, 55, 72);
+pub const DIM: Color = Color::Rgb(40, 50, 68);
 pub const TEXT: Color = Color::Rgb(226, 232, 240);
 pub const TEXT_MUTED: Color = Color::Rgb(148, 163, 184);
 
@@ -33,24 +35,19 @@ pub fn gradient_line(text: &str, from: Color, to: Color) -> Line<'static> {
     if len == 0 {
         return Line::default();
     }
-    let spans: Vec<Span<'static>> = chars
-        .into_iter()
-        .enumerate()
-        .map(|(i, c)| {
-            let t = if len > 1 {
-                i as f64 / (len - 1) as f64
-            } else {
-                0.0
-            };
-            Span::styled(
-                c.to_string(),
-                Style::default()
-                    .fg(gradient(from, to, t))
-                    .add_modifier(Modifier::BOLD),
-            )
-        })
-        .collect();
-    Line::from(spans)
+    Line::from(
+        chars
+            .into_iter()
+            .enumerate()
+            .map(|(i, c)| {
+                let t = if len > 1 { i as f64 / (len - 1) as f64 } else { 0.0 };
+                Span::styled(
+                    c.to_string(),
+                    Style::default().fg(gradient(from, to, t)).add_modifier(Modifier::BOLD),
+                )
+            })
+            .collect::<Vec<_>>(),
+    )
 }
 
 pub fn breathe(base: Color, tick: u64, speed: f64) -> Color {
@@ -62,8 +59,6 @@ pub fn breathe(base: Color, tick: u64, speed: f64) -> Color {
         (b as f64 * phase) as u8,
     )
 }
-
-// ── Style Helpers ────────────────────────────────────────────
 
 pub fn bold(color: Color) -> Style {
     Style::default().fg(color).add_modifier(Modifier::BOLD)
@@ -77,13 +72,12 @@ pub fn border_style() -> Style {
     Style::default().fg(DIM)
 }
 
-// ── Internal ─────────────────────────────────────────────────
+pub fn cmd_style() -> Style {
+    Style::default().fg(EMERALD)
+}
 
 fn rgb(c: Color) -> (u8, u8, u8) {
-    match c {
-        Color::Rgb(r, g, b) => (r, g, b),
-        _ => (255, 255, 255),
-    }
+    match c { Color::Rgb(r, g, b) => (r, g, b), _ => (255, 255, 255) }
 }
 
 fn lerp_u8(a: u8, b: u8, t: f64) -> u8 {
