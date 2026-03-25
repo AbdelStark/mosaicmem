@@ -6,7 +6,9 @@ pub mod runner;
 pub mod theme;
 
 use crossterm::event::{self, Event, KeyCode, KeyEventKind};
-use crossterm::terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen};
+use crossterm::terminal::{
+    EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode,
+};
 use ratatui::prelude::*;
 use ratatui::widgets::*;
 use std::io::{self, stdout};
@@ -133,7 +135,9 @@ fn handle_key(app: &mut App, key: KeyCode) {
     match key {
         KeyCode::Char('q') | KeyCode::Esc => app.running = false,
         KeyCode::Tab => switch_tab(app, (app.tab.index() + 1) % Tab::ALL.len()),
-        KeyCode::BackTab => switch_tab(app, (app.tab.index() + Tab::ALL.len() - 1) % Tab::ALL.len()),
+        KeyCode::BackTab => {
+            switch_tab(app, (app.tab.index() + Tab::ALL.len() - 1) % Tab::ALL.len())
+        }
         KeyCode::Char('1') => switch_tab(app, 0),
         KeyCode::Char('2') => switch_tab(app, 1),
         KeyCode::Char('3') => switch_tab(app, 2),
@@ -143,10 +147,18 @@ fn handle_key(app: &mut App, key: KeyCode) {
             let idx = app.tab.index();
             app.tab_initialized[idx] = false;
             match app.tab {
-                Tab::Demo => { app.demo = demo_tab::DemoState::default(); }
-                Tab::Coverage => { app.coverage = coverage_tab::CoverageState::default(); }
-                Tab::Bench => { app.bench = bench_tab::BenchState::default(); }
-                Tab::Ops => { app.ops = ops_tab::OpsState::default(); }
+                Tab::Demo => {
+                    app.demo = demo_tab::DemoState::default();
+                }
+                Tab::Coverage => {
+                    app.coverage = coverage_tab::CoverageState::default();
+                }
+                Tab::Bench => {
+                    app.bench = bench_tab::BenchState::default();
+                }
+                Tab::Ops => {
+                    app.ops = ops_tab::OpsState::default();
+                }
             }
             app.ensure_tab_init();
         }
@@ -155,7 +167,9 @@ fn handle_key(app: &mut App, key: KeyCode) {
 }
 
 fn switch_tab(app: &mut App, idx: usize) {
-    if idx == app.tab.index() { return; }
+    if idx == app.tab.index() {
+        return;
+    }
     app.tab = Tab::ALL[idx];
     app.ensure_tab_init();
     // Fire fade-in transition
@@ -168,7 +182,10 @@ fn render(f: &mut Frame, app: &mut App) {
     let area = f.area();
 
     // Dark background
-    f.render_widget(Block::default().style(Style::default().bg(theme::SURFACE)), area);
+    f.render_widget(
+        Block::default().style(Style::default().bg(theme::SURFACE)),
+        area,
+    );
 
     let layout = Layout::vertical([
         Constraint::Length(3),
@@ -235,7 +252,11 @@ fn render_tab_bar(f: &mut Frame, app: &App, area: Rect) {
         .block(block)
         .select(app.tab.index())
         .style(Style::default().fg(theme::SLATE))
-        .highlight_style(Style::default().fg(theme::GOLD).add_modifier(Modifier::BOLD))
+        .highlight_style(
+            Style::default()
+                .fg(theme::GOLD)
+                .add_modifier(Modifier::BOLD),
+        )
         .divider(Span::styled(" │ ", Style::default().fg(theme::DIM)));
 
     f.render_widget(tabs, area);

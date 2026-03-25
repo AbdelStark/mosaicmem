@@ -1,5 +1,6 @@
 target/
 demo_output/
+output/
 
 # IDE
 .idea/
@@ -15,3 +16,9 @@ Thumbs.db
 # Environment
 .env
 .env.*
+
+# Local agent/tool caches
+.claude/cache/
+.claude/tsc-cache/
+.tldr/
+.tldrignore

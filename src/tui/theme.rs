@@ -40,10 +40,16 @@ pub fn gradient_line(text: &str, from: Color, to: Color) -> Line<'static> {
             .into_iter()
             .enumerate()
             .map(|(i, c)| {
-                let t = if len > 1 { i as f64 / (len - 1) as f64 } else { 0.0 };
+                let t = if len > 1 {
+                    i as f64 / (len - 1) as f64
+                } else {
+                    0.0
+                };
                 Span::styled(
                     c.to_string(),
-                    Style::default().fg(gradient(from, to, t)).add_modifier(Modifier::BOLD),
+                    Style::default()
+                        .fg(gradient(from, to, t))
+                        .add_modifier(Modifier::BOLD),
                 )
             })
             .collect::<Vec<_>>(),
@@ -77,7 +83,10 @@ pub fn cmd_style() -> Style {
 }
 
 fn rgb(c: Color) -> (u8, u8, u8) {
-    match c { Color::Rgb(r, g, b) => (r, g, b), _ => (255, 255, 255) }
+    match c {
+        Color::Rgb(r, g, b) => (r, g, b),
+        _ => (255, 255, 255),
+    }
 }
 
 fn lerp_u8(a: u8, b: u8, t: f64) -> u8 {

@@ -1,8 +1,10 @@
 use crate::camera::{CameraIntrinsics, CameraPose};
 use crate::geometry::projection::frustum_cull;
-use kiddo::{KdTree, SquaredEuclidean};
+use kiddo::SquaredEuclidean;
 use nalgebra::{Point2, Point3};
 use serde::{Deserialize, Serialize};
+
+type SpatialKdTree = kiddo::float::kdtree::KdTree<f32, u64, 3, 256, u32>;
 
 /// A 3D patch stored in memory with provenance.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -91,7 +93,7 @@ pub struct MosaicMemoryStore {
     /// All stored patches.
     pub patches: Vec<Patch3D>,
     /// KD-tree for spatial queries.
-    kdtree: Option<KdTree<f32, 3>>,
+    kdtree: Option<SpatialKdTree>,
     /// Configuration.
     pub config: MemoryConfig,
     /// Next patch ID.
@@ -391,7 +393,7 @@ impl MosaicMemoryStore {
             self.kdtree = None;
             return;
         }
-        let mut tree = KdTree::new();
+        let mut tree = SpatialKdTree::new();
         for (i, patch) in self.patches.iter().enumerate() {
             let pos = [patch.center.x, patch.center.y, patch.center.z];
             tree.add(&pos, i as u64);

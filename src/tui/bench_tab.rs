@@ -11,20 +11,24 @@ pub struct BenchState {
     pub log: Vec<String>,
 }
 
-
 impl BenchState {
     pub fn init(&mut self) {
-        self.log.push("$ mosaicmem bench --num-frames 32 --steps 5 --iterations 5".into());
+        self.log
+            .push("$ mosaicmem bench --num-frames 32 --steps 5 --iterations 5".into());
         self.log.push("Running benchmark...".into());
         let result = super::runner::run_bench();
         for (i, it) in result.iterations.iter().enumerate() {
             self.log.push(format!(
                 "Iteration {}: {:.2}ms ({} patches, {} points)",
-                i + 1, it.duration_ms, it.num_patches, it.num_points
+                i + 1,
+                it.duration_ms,
+                it.num_patches,
+                it.num_points
             ));
         }
         self.log.push(format!("Average: {:.2}ms", result.avg_ms));
-        self.log.push(format!("Throughput: {:.1} frames/sec", result.fps));
+        self.log
+            .push(format!("Throughput: {:.1} frames/sec", result.fps));
         self.result = Some(result);
     }
 }
@@ -33,9 +37,10 @@ pub fn render(f: &mut Frame, state: &mut BenchState, area: Rect, tick: u64) {
     // Reveal iterations over time
     if tick.is_multiple_of(10)
         && let Some(ref result) = state.result
-            && state.anim_iter < result.iterations.len() {
-                state.anim_iter += 1;
-            }
+        && state.anim_iter < result.iterations.len()
+    {
+        state.anim_iter += 1;
+    }
 
     let rows = Layout::vertical([
         Constraint::Length(3),  // command
@@ -55,7 +60,10 @@ pub fn render(f: &mut Frame, state: &mut BenchState, area: Rect, tick: u64) {
         Paragraph::new(Line::from(vec![
             Span::styled("$ ", theme::cmd_style()),
             Span::styled("mosaicmem bench", theme::bold(theme::TEXT)),
-            Span::styled(" --num-frames 32 --steps 5 --iterations 5", Style::default().fg(theme::TEXT_MUTED)),
+            Span::styled(
+                " --num-frames 32 --steps 5 --iterations 5",
+                Style::default().fg(theme::TEXT_MUTED),
+            ),
         ]))
         .block(cmd_block),
         rows[0],
@@ -66,8 +74,7 @@ pub fn render(f: &mut Frame, state: &mut BenchState, area: Rect, tick: u64) {
 }
 
 fn render_main(f: &mut Frame, state: &BenchState, area: Rect, tick: u64) {
-    let cols = Layout::horizontal([Constraint::Min(0), Constraint::Length(36)])
-        .split(area);
+    let cols = Layout::horizontal([Constraint::Min(0), Constraint::Length(36)]).split(area);
 
     render_chart(f, state, cols[0], tick);
     render_metrics(f, state, cols[1], tick);
@@ -78,7 +85,10 @@ fn render_chart(f: &mut Frame, state: &BenchState, area: Rect, _tick: u64) {
         .borders(Borders::ALL)
         .border_type(BorderType::Rounded)
         .border_style(theme::border_style())
-        .title(Span::styled(" Latency per Iteration ", theme::title_style()));
+        .title(Span::styled(
+            " Latency per Iteration ",
+            theme::title_style(),
+        ));
 
     let inner = block.inner(area);
     f.render_widget(block, area);
@@ -88,7 +98,9 @@ fn render_chart(f: &mut Frame, state: &BenchState, area: Rect, _tick: u64) {
         None => return,
     };
 
-    if inner.height < 3 || inner.width < 6 { return; }
+    if inner.height < 3 || inner.width < 6 {
+        return;
+    }
 
     let visible = state.anim_iter.min(result.iterations.len());
     let max_ms = result.max_ms * 1.2;
@@ -104,7 +116,11 @@ fn render_chart(f: &mut Frame, state: &BenchState, area: Rect, _tick: u64) {
 
         for (i, it) in result.iterations.iter().enumerate() {
             let is_visible = i < visible;
-            let fill = if is_visible && it.duration_ms > threshold { "█" } else { " " };
+            let fill = if is_visible && it.duration_ms > threshold {
+                "█"
+            } else {
+                " "
+            };
 
             let color = if !is_visible {
                 theme::DIM
@@ -161,10 +177,16 @@ fn render_metrics(f: &mut Frame, state: &BenchState, area: Rect, tick: u64) {
                     .fg(theme::EMERALD)
                     .add_modifier(Modifier::BOLD),
             )),
-            Line::from(Span::styled("  frames/sec", Style::default().fg(theme::TEXT_MUTED))),
+            Line::from(Span::styled(
+                "  frames/sec",
+                Style::default().fg(theme::TEXT_MUTED),
+            )),
         ]
     } else {
-        vec![Line::from(Span::styled("  ...", Style::default().fg(theme::SLATE)))]
+        vec![Line::from(Span::styled(
+            "  ...",
+            Style::default().fg(theme::SLATE),
+        ))]
     };
     f.render_widget(Paragraph::new(fps_text).block(block), rows[0]);
 
@@ -181,13 +203,24 @@ fn render_metrics(f: &mut Frame, state: &BenchState, area: Rect, tick: u64) {
             stat_line("Average", &format!("{:.2}ms", r.avg_ms), theme::CYAN),
             stat_line("Min", &format!("{:.2}ms", r.min_ms), theme::EMERALD),
             stat_line("Max", &format!("{:.2}ms", r.max_ms), theme::CORAL),
-            stat_line("Per-frame", &format!("{:.2}ms", r.per_frame_ms), theme::LAVENDER),
+            stat_line(
+                "Per-frame",
+                &format!("{:.2}ms", r.per_frame_ms),
+                theme::LAVENDER,
+            ),
             Line::default(),
             stat_line("Frames", &format!("{}", r.num_frames), theme::TEXT),
-            stat_line("Iterations", &format!("{}", r.iterations.len()), theme::TEXT),
+            stat_line(
+                "Iterations",
+                &format!("{}", r.iterations.len()),
+                theme::TEXT,
+            ),
         ]
     } else {
-        vec![Line::from(Span::styled("  Running...", Style::default().fg(theme::SLATE)))]
+        vec![Line::from(Span::styled(
+            "  Running...",
+            Style::default().fg(theme::SLATE),
+        ))]
     };
     f.render_widget(Paragraph::new(lines).block(stats_block), rows[1]);
 
@@ -236,14 +269,19 @@ fn render_log(f: &mut Frame, state: &BenchState, area: Rect) {
         })
         .collect();
 
-    let start = items.len().saturating_sub(area.height.saturating_sub(2) as usize);
+    let start = items
+        .len()
+        .saturating_sub(area.height.saturating_sub(2) as usize);
     let visible: Vec<ListItem> = items.into_iter().skip(start).collect();
     f.render_widget(List::new(visible).block(block), area);
 }
 
 fn stat_line<'a>(label: &'a str, value: &str, color: Color) -> Line<'a> {
     Line::from(vec![
-        Span::styled(format!("  {label:10}"), Style::default().fg(theme::TEXT_MUTED)),
+        Span::styled(
+            format!("  {label:10}"),
+            Style::default().fg(theme::TEXT_MUTED),
+        ),
         Span::styled(value.to_string(), theme::bold(color)),
     ])
 }

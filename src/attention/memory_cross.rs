@@ -2,6 +2,7 @@ use crate::attention::warped_rope::WarpedRoPE;
 use crate::camera::{CameraIntrinsics, CameraPose};
 use crate::memory::mosaic::MosaicFrame;
 use crate::memory::store::RetrievedPatch;
+use rand::{Rng, SeedableRng, rngs::StdRng};
 
 /// Memory Cross-Attention layer with multi-head attention and WarpedRoPE.
 ///
@@ -36,15 +37,24 @@ pub struct MemoryCrossAttention {
 impl MemoryCrossAttention {
     /// Create a new MemoryCrossAttention with Xavier initialization.
     pub fn new(hidden_dim: usize, num_heads: usize) -> Self {
+        Self::new_seeded(hidden_dim, num_heads, 0)
+    }
+
+    /// Create a new MemoryCrossAttention with deterministic initialization.
+    pub fn new_seeded(hidden_dim: usize, num_heads: usize, seed: u64) -> Self {
+        assert!(num_heads > 0, "num_heads must be greater than zero");
+        assert!(
+            hidden_dim.is_multiple_of(num_heads),
+            "hidden_dim must be divisible by num_heads"
+        );
         let head_dim = hidden_dim / num_heads;
         let dim_per_axis = (head_dim / 3 / 2 * 2).max(2); // ensure even, split across u,v,t
 
         // Xavier-style initialization scale
         let scale = (1.0 / hidden_dim as f32).sqrt();
+        let mut rng = StdRng::seed_from_u64(seed);
 
-        let init_matrix = |rows: usize, cols: usize| -> Vec<Vec<f32>> {
-            use rand::Rng;
-            let mut rng = rand::thread_rng();
+        let mut init_matrix = |rows: usize, cols: usize| -> Vec<Vec<f32>> {
             (0..rows)
                 .map(|_| (0..cols).map(|_| rng.gen_range(-scale..scale)).collect())
                 .collect()

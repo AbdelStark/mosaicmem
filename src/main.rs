@@ -6,12 +6,14 @@ use tracing_subscriber::EnvFilter;
 use mosaicmem::camera::{CameraPose, CameraTrajectory};
 use mosaicmem::diffusion::backbone::SyntheticBackbone;
 use mosaicmem::diffusion::scheduler::DDPMScheduler;
-use mosaicmem::diffusion::vae::SyntheticVAE;
+use mosaicmem::diffusion::vae::{SyntheticVAE, VAE};
 use mosaicmem::geometry::depth::SyntheticDepthEstimator;
+use mosaicmem::geometry::fusion::StreamingFusion;
 use mosaicmem::memory::manipulation;
 use mosaicmem::memory::store::{MemoryConfig, MosaicMemoryStore};
 use mosaicmem::pipeline::autoregressive::AutoregressivePipeline;
 use mosaicmem::pipeline::config::PipelineConfig;
+use mosaicmem::pipeline::inference::extract_frame_planar;
 
 #[derive(Parser)]
 #[command(
@@ -313,6 +315,81 @@ struct GenerateArgs<'a> {
     seed: u64,
 }
 
+fn synthetic_frame_data(width: u32, height: u32) -> Vec<u8> {
+    vec![128u8; (width * height * 3) as usize]
+}
+
+fn rgb8_interleaved_to_planar(frame_data: &[u8], width: u32, height: u32) -> Vec<f32> {
+    let pixels = (width * height) as usize;
+    let mut planar = vec![0.0f32; pixels * 3];
+
+    for pixel in 0..pixels {
+        for channel in 0..3 {
+            let src_idx = pixel * 3 + channel;
+            let dst_idx = channel * pixels + pixel;
+            planar[dst_idx] = frame_data.get(src_idx).copied().unwrap_or(0) as f32 / 255.0;
+        }
+    }
+
+    planar
+}
+
+fn build_synthetic_memory_store(
+    trajectory: &CameraTrajectory,
+    width: u32,
+    height: u32,
+    memory_config: MemoryConfig,
+    voxel_size: f32,
+) -> Result<(MosaicMemoryStore, StreamingFusion), Box<dyn std::error::Error>> {
+    use mosaicmem::camera::CameraIntrinsics;
+    use mosaicmem::geometry::depth::DepthEstimator;
+
+    let intrinsics = CameraIntrinsics::default_for_resolution(width, height);
+    let depth_estimator = SyntheticDepthEstimator::new(5.0, 1.0);
+    let vae = SyntheticVAE::new(8, 4, 16);
+
+    let mut fusion = StreamingFusion::new(voxel_size);
+    let mut store = MosaicMemoryStore::new(memory_config);
+    let keyframes = trajectory.select_keyframes(0.5, 0.1);
+
+    for &keyframe_idx in &keyframes {
+        if keyframe_idx >= trajectory.len() {
+            continue;
+        }
+
+        let pose = &trajectory.poses[keyframe_idx];
+        let frame_data = synthetic_frame_data(width, height);
+        let depth_map = depth_estimator.estimate_depth(&frame_data, width, height)?;
+
+        fusion.add_keyframe(
+            &frame_data,
+            width,
+            height,
+            &intrinsics,
+            pose,
+            &depth_estimator,
+        )?;
+
+        let frame_f32 = rgb8_interleaved_to_planar(&frame_data, width, height);
+        let frame_shape = [1, 3, 1, height as usize, width as usize];
+        let (latents, lat_shape) = vae.encode(&frame_f32, &frame_shape)?;
+
+        store.insert_keyframe(
+            keyframe_idx,
+            pose.timestamp,
+            &latents,
+            lat_shape[3],
+            lat_shape[4],
+            lat_shape[1],
+            &depth_map,
+            &intrinsics,
+            pose,
+        );
+    }
+
+    Ok((store, fusion))
+}
+
 fn cmd_generate(args: &GenerateArgs) -> Result<(), Box<dyn std::error::Error>> {
     let GenerateArgs {
         trajectory_path,
@@ -377,26 +454,27 @@ fn cmd_generate(args: &GenerateArgs) -> Result<(), Box<dyn std::error::Error>> {
     info!("Final stats: {}", pipeline.stats());
 
     // Write frames as PNG images
-    let mut frame_offset = 0;
+    let mut window_offset = 0;
     for (win_idx, shape) in shapes.iter().enumerate() {
         let [_b, c, t, h, w] = *shape;
-        let frame_size = c * h * w;
-        for f_idx in 0..t {
-            let start = frame_offset + f_idx * frame_size;
-            let end = start + frame_size;
-            if end > frames.len() {
-                break;
-            }
-            let frame_data = &frames[start..end];
-            write_frame_png(
-                frame_data,
-                w as u32,
-                h as u32,
-                c,
-                &output_dir_clone.join(format!("frame_{:04}_{:02}.png", win_idx, f_idx)),
-            )?;
+        let window_len = c * t * h * w;
+        let window_end = window_offset + window_len;
+        if window_end > frames.len() {
+            break;
         }
-        frame_offset += t * frame_size;
+        let window_data = &frames[window_offset..window_end];
+        for f_idx in 0..t {
+            if let Some(frame_data) = extract_frame_planar(window_data, &[1, c, t, h, w], f_idx) {
+                write_frame_png(
+                    &frame_data,
+                    w as u32,
+                    h as u32,
+                    c,
+                    &output_dir_clone.join(format!("frame_{:04}_{:02}.png", win_idx, f_idx)),
+                )?;
+            }
+        }
+        window_offset = window_end;
     }
     info!("Frames written to {:?}", output_dir_clone);
 
@@ -442,10 +520,10 @@ fn cmd_splice(
     let traj_a = CameraTrajectory::load_json(trajectory_a)?;
     let traj_b = CameraTrajectory::load_json(trajectory_b)?;
 
-    // Build memory stores from trajectories
-    let config = MemoryConfig::default();
-    let store_a = MosaicMemoryStore::new(config.clone());
-    let store_b = MosaicMemoryStore::new(config);
+    let (store_a, _) =
+        build_synthetic_memory_store(&traj_a, 64, 64, MemoryConfig::default(), 0.05)?;
+    let (store_b, _) =
+        build_synthetic_memory_store(&traj_b, 64, 64, MemoryConfig::default(), 0.05)?;
 
     let result = match layout {
         "horizontal" => manipulation::splice_horizontal(&store_a, &store_b, offset),
@@ -460,8 +538,8 @@ fn cmd_splice(
 
     info!(
         "Splice complete: {} + {} = {} patches",
-        traj_a.len(),
-        traj_b.len(),
+        store_a.num_patches(),
+        store_b.num_patches(),
         result.len()
     );
 
@@ -574,25 +652,27 @@ fn cmd_demo(
     info!("Trajectory saved: {:?}", traj_path);
 
     // Save sample frames
-    let mut frame_offset = 0;
+    let mut window_offset = 0;
     for (win_idx, shape) in shapes.iter().enumerate() {
         let [_b, c, t, h, w] = *shape;
-        let frame_size = c * h * w;
-        for f_idx in 0..t {
-            let start = frame_offset + f_idx * frame_size;
-            let end = start + frame_size;
-            if end > frames.len() {
-                break;
-            }
-            write_frame_png(
-                &frames[start..end],
-                w as u32,
-                h as u32,
-                c,
-                &demo_dir.join(format!("frame_{:04}_{:02}.png", win_idx, f_idx)),
-            )?;
+        let window_len = c * t * h * w;
+        let window_end = window_offset + window_len;
+        if window_end > frames.len() {
+            break;
         }
-        frame_offset += t * frame_size;
+        let window_data = &frames[window_offset..window_end];
+        for f_idx in 0..t {
+            if let Some(frame_data) = extract_frame_planar(window_data, &[1, c, t, h, w], f_idx) {
+                write_frame_png(
+                    &frame_data,
+                    w as u32,
+                    h as u32,
+                    c,
+                    &demo_dir.join(format!("frame_{:04}_{:02}.png", win_idx, f_idx)),
+                )?;
+            }
+        }
+        window_offset = window_end;
     }
     info!("Frames written to {:?}/", demo_dir);
 
@@ -606,10 +686,6 @@ fn cmd_inspect(
     height: u32,
     show_coverage: bool,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    use mosaicmem::camera::CameraIntrinsics;
-    use mosaicmem::diffusion::vae::VAE;
-    use mosaicmem::geometry::depth::DepthEstimator;
-    use mosaicmem::geometry::fusion::StreamingFusion;
     use mosaicmem::memory::retrieval::MemoryRetriever;
 
     info!("=== MosaicMem Trajectory Inspector ===");
@@ -627,63 +703,15 @@ fn cmd_inspect(
         keyframes_uniform.len()
     );
 
-    // Build a synthetic memory store to analyze spatial coverage
-    let intrinsics = CameraIntrinsics::default_for_resolution(width, height);
-    let depth_estimator = SyntheticDepthEstimator::new(5.0, 1.0);
-
-    let mut fusion = StreamingFusion::new(0.05);
     let memory_config = MemoryConfig {
         max_patches: 10000,
         top_k: 64,
         ..Default::default()
     };
-    let mut store = MosaicMemoryStore::new(memory_config);
-    let vae = SyntheticVAE::new(8, 4, 16);
-
-    // Process keyframes to build memory
     info!("--- Building synthetic memory from trajectory ---");
-    for &ki in &keyframes_motion {
-        if ki >= trajectory.len() {
-            continue;
-        }
-        let pose = &trajectory.poses[ki];
-
-        // Generate synthetic frame data
-        let frame_pixels = (width * height * 3) as usize;
-        let frame_data = vec![128u8; frame_pixels];
-
-        let depth_map = depth_estimator.estimate_depth(&frame_data, width, height)?;
-
-        // Add to fusion
-        let _ = fusion.add_keyframe(
-            &frame_data,
-            width,
-            height,
-            &intrinsics,
-            pose,
-            &depth_estimator,
-        );
-
-        // Encode to latent and insert into memory
-        let frame_f32: Vec<f32> = frame_data.iter().map(|&b| b as f32 / 255.0).collect();
-        let frame_shape = [1, 3, 1, height as usize, width as usize];
-        let (latents, lat_shape) = vae.encode(&frame_f32, &frame_shape)?;
-        let lat_h = lat_shape[3];
-        let lat_w = lat_shape[4];
-        let lat_c = lat_shape[1];
-
-        store.insert_keyframe(
-            ki,
-            pose.timestamp,
-            &latents,
-            lat_h,
-            lat_w,
-            lat_c,
-            &depth_map,
-            &intrinsics,
-            pose,
-        );
-    }
+    let (store, fusion) =
+        build_synthetic_memory_store(&trajectory, width, height, memory_config, 0.05)?;
+    let intrinsics = mosaicmem::camera::CameraIntrinsics::default_for_resolution(width, height);
 
     info!("--- Memory Statistics ---");
     info!("Stored patches: {}", store.num_patches());
@@ -802,35 +830,19 @@ fn cmd_export_ply(
     height: u32,
     voxel_size: f32,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    use mosaicmem::camera::CameraIntrinsics;
-    use mosaicmem::geometry::fusion::StreamingFusion;
-
     info!("=== PLY Export ===");
     let trajectory = CameraTrajectory::load_json(trajectory_path)?;
     info!("Trajectory: {} poses", trajectory.len());
 
-    let intrinsics = CameraIntrinsics::default_for_resolution(width, height);
-    let depth_estimator = SyntheticDepthEstimator::new(5.0, 1.0);
-    let mut fusion = StreamingFusion::new(voxel_size);
-
     let keyframes = trajectory.select_keyframes(0.5, 0.1);
     info!("Processing {} keyframes...", keyframes.len());
-
-    for &ki in &keyframes {
-        if ki >= trajectory.len() {
-            continue;
-        }
-        let pose = &trajectory.poses[ki];
-        let frame_data = vec![128u8; (width * height * 3) as usize];
-        let _ = fusion.add_keyframe(
-            &frame_data,
-            width,
-            height,
-            &intrinsics,
-            pose,
-            &depth_estimator,
-        );
-    }
+    let (_, fusion) = build_synthetic_memory_store(
+        &trajectory,
+        width,
+        height,
+        MemoryConfig::default(),
+        voxel_size,
+    )?;
 
     info!(
         "Point cloud: {} points, {} keyframes",

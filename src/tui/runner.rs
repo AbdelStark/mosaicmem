@@ -101,7 +101,13 @@ fn make_config(num_frames: usize, width: u32, height: u32, steps: usize) -> Pipe
     }
 }
 
-fn make_components() -> (SyntheticBackbone, DDPMScheduler, SyntheticVAE, SyntheticDepthEstimator, Vec<Vec<f32>>) {
+fn make_components() -> (
+    SyntheticBackbone,
+    DDPMScheduler,
+    SyntheticVAE,
+    SyntheticDepthEstimator,
+    Vec<Vec<f32>>,
+) {
     (
         SyntheticBackbone::new(0.1),
         DDPMScheduler::linear(1000, 1e-4, 0.02),
@@ -131,7 +137,15 @@ pub fn run_demo() -> DemoResult {
 
     let mut pipeline = AutoregressivePipeline::new(config);
     let (frames, shapes) = pipeline
-        .generate(&trajectory, &text_emb, &backbone, &scheduler, &vae, &depth, None)
+        .generate(
+            &trajectory,
+            &text_emb,
+            &backbone,
+            &scheduler,
+            &vae,
+            &depth,
+            None,
+        )
         .expect("pipeline generate");
 
     let stats = pipeline.stats();
@@ -200,14 +214,28 @@ pub fn run_coverage() -> CoverageResult {
         let depth_map = depth_estimator
             .estimate_depth(&frame_data, width, height)
             .expect("depth");
-        let _ = fusion.add_keyframe(&frame_data, width, height, &intrinsics, pose, &depth_estimator);
+        let _ = fusion.add_keyframe(
+            &frame_data,
+            width,
+            height,
+            &intrinsics,
+            pose,
+            &depth_estimator,
+        );
 
         let frame_f32: Vec<f32> = frame_data.iter().map(|&b| b as f32 / 255.0).collect();
         let frame_shape = [1, 3, 1, height as usize, width as usize];
         let (latents, lat_shape) = vae.encode(&frame_f32, &frame_shape).expect("encode");
         store.insert_keyframe(
-            ki, pose.timestamp, &latents, lat_shape[3], lat_shape[4], lat_shape[1],
-            &depth_map, &intrinsics, pose,
+            ki,
+            pose.timestamp,
+            &latents,
+            lat_shape[3],
+            lat_shape[4],
+            lat_shape[1],
+            &depth_map,
+            &intrinsics,
+            pose,
         );
     }
 
@@ -266,7 +294,15 @@ pub fn run_bench() -> BenchResult {
     for _ in 0..iters {
         let mut pipeline = AutoregressivePipeline::new(config.clone());
         let start = Instant::now();
-        let _ = pipeline.generate(&trajectory, &text_emb, &backbone, &scheduler, &vae, &depth, None);
+        let _ = pipeline.generate(
+            &trajectory,
+            &text_emb,
+            &backbone,
+            &scheduler,
+            &vae,
+            &depth,
+            None,
+        );
         let ms = start.elapsed().as_secs_f64() * 1000.0;
         let stats = pipeline.stats();
         iterations.push(BenchIteration {
@@ -278,8 +314,14 @@ pub fn run_bench() -> BenchResult {
 
     let total_ms: f64 = iterations.iter().map(|i| i.duration_ms).sum();
     let avg_ms = total_ms / iters as f64;
-    let min_ms = iterations.iter().map(|i| i.duration_ms).fold(f64::INFINITY, f64::min);
-    let max_ms = iterations.iter().map(|i| i.duration_ms).fold(f64::NEG_INFINITY, f64::max);
+    let min_ms = iterations
+        .iter()
+        .map(|i| i.duration_ms)
+        .fold(f64::INFINITY, f64::min);
+    let max_ms = iterations
+        .iter()
+        .map(|i| i.duration_ms)
+        .fold(f64::NEG_INFINITY, f64::max);
 
     BenchResult {
         iterations,
@@ -304,7 +346,15 @@ pub fn run_ops() -> OpsResult {
     let (backbone, scheduler, vae, depth, text_emb) = make_components();
 
     let mut pipeline = AutoregressivePipeline::new(config);
-    let _ = pipeline.generate(&trajectory, &text_emb, &backbone, &scheduler, &vae, &depth, None);
+    let _ = pipeline.generate(
+        &trajectory,
+        &text_emb,
+        &backbone,
+        &scheduler,
+        &vae,
+        &depth,
+        None,
+    );
 
     let store = &pipeline.pipeline.memory_store;
     let original = store.num_patches();

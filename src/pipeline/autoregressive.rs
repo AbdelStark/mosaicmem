@@ -38,7 +38,7 @@ fn blend_overlap(
 ) -> Vec<f32> {
     let [_b, c, t_new, h, w] = *new_shape;
     let [_, _, t_prev, _, _] = *prev_shape;
-    let frame_size = c * h * w;
+    let plane = h * w;
 
     if overlap_frames == 0 || t_prev == 0 {
         return new_frames.to_vec();
@@ -54,15 +54,17 @@ fn blend_overlap(
         let alpha = (oi as f32 + 1.0) / (overlap as f32 + 1.0);
 
         let prev_frame_idx = t_prev - overlap + oi;
-        let prev_start = prev_frame_idx * frame_size;
-        let new_start = oi * frame_size;
+        for channel in 0..c {
+            let prev_start = channel * t_prev * plane + prev_frame_idx * plane;
+            let new_start = channel * t_new * plane + oi * plane;
 
-        for pixel in 0..frame_size {
-            let prev_idx = prev_start + pixel;
-            let new_idx = new_start + pixel;
-            if prev_idx < prev_frames.len() && new_idx < result.len() {
-                result[new_idx] =
-                    alpha * new_frames[new_idx] + (1.0 - alpha) * prev_frames[prev_idx];
+            for pixel in 0..plane {
+                let prev_idx = prev_start + pixel;
+                let new_idx = new_start + pixel;
+                if prev_idx < prev_frames.len() && new_idx < result.len() {
+                    result[new_idx] =
+                        alpha * new_frames[new_idx] + (1.0 - alpha) * prev_frames[prev_idx];
+                }
             }
         }
     }
@@ -79,7 +81,8 @@ impl AutoregressivePipeline {
     /// Generate a full video from a camera trajectory.
     ///
     /// Overlap frames between windows are linearly blended for smooth transitions.
-    /// The output contains non-overlapping frame data after blending.
+    /// Returned frame buffers remain window-aligned, so overlap is still present
+    /// in the concatenated output even after blending.
     ///
     /// # Arguments
     /// * `trajectory` - Full camera trajectory
@@ -310,5 +313,34 @@ mod tests {
                 "Blending identical data should preserve values"
             );
         }
+    }
+
+    #[test]
+    fn test_blend_overlap_preserves_channel_layout() {
+        let shape = [1, 3, 2, 1, 1];
+        let prev = vec![
+            1.0, 2.0, // red frames
+            3.0, 4.0, // green frames
+            5.0, 6.0, // blue frames
+        ];
+        let new = vec![
+            10.0, 20.0, // red frames
+            30.0, 40.0, // green frames
+            50.0, 60.0, // blue frames
+        ];
+
+        let blended = blend_overlap(&prev, &shape, &new, &shape, 1);
+        let alpha = 0.5;
+        assert_eq!(
+            blended,
+            vec![
+                alpha * 10.0 + (1.0 - alpha) * 2.0,
+                20.0,
+                alpha * 30.0 + (1.0 - alpha) * 4.0,
+                40.0,
+                alpha * 50.0 + (1.0 - alpha) * 6.0,
+                60.0,
+            ]
+        );
     }
 }

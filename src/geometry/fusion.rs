@@ -2,8 +2,10 @@ use crate::camera::{CameraIntrinsics, CameraPose};
 use crate::geometry::depth::{DepthError, DepthEstimator};
 use crate::geometry::pointcloud::PointCloud3D;
 use crate::geometry::projection::unproject_depth_map;
-use kiddo::{KdTree, SquaredEuclidean};
+use kiddo::SquaredEuclidean;
 use thiserror::Error;
+
+type SpatialKdTree = kiddo::float::kdtree::KdTree<f32, u64, 3, 256, u32>;
 
 /// Errors that can occur during streaming fusion.
 #[derive(Error, Debug)]
@@ -18,7 +20,7 @@ pub struct StreamingFusion {
     /// The accumulated global point cloud.
     pub global_cloud: PointCloud3D,
     /// KD-tree for spatial queries on the global cloud.
-    pub kdtree: Option<KdTree<f32, 3>>,
+    pub kdtree: Option<SpatialKdTree>,
     /// Voxel size for deduplication.
     pub voxel_size: f32,
     /// Number of keyframes fused so far.
@@ -102,7 +104,7 @@ impl StreamingFusion {
 
     /// Attempt to build a KD-tree, returning None if kiddo panics due to
     /// too many coincident points.
-    fn try_build_kdtree(&self) -> Option<KdTree<f32, 3>> {
+    fn try_build_kdtree(&self) -> Option<SpatialKdTree> {
         use std::panic;
         let points: Vec<([f32; 3], u64)> = self
             .global_cloud
@@ -113,7 +115,7 @@ impl StreamingFusion {
             .collect();
 
         panic::catch_unwind(|| {
-            let mut tree = KdTree::new();
+            let mut tree = SpatialKdTree::new();
             for (pos, id) in &points {
                 tree.add(pos, *id);
             }

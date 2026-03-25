@@ -11,14 +11,19 @@ pub struct CoverageState {
     pub log: Vec<String>,
 }
 
-
 impl CoverageState {
     pub fn init(&mut self) {
-        self.log.push("$ mosaicmem inspect --trajectory traj.json --coverage".into());
-        self.log.push("Building synthetic memory from trajectory...".into());
+        self.log
+            .push("$ mosaicmem inspect --trajectory traj.json --coverage".into());
+        self.log
+            .push("Building synthetic memory from trajectory...".into());
         let result = super::runner::run_coverage();
-        self.log.push(format!("Stored {} patches, {} points", result.num_patches, result.num_points));
-        self.log.push(format!("Total tokens: {}", result.total_tokens));
+        self.log.push(format!(
+            "Stored {} patches, {} points",
+            result.num_patches, result.num_points
+        ));
+        self.log
+            .push(format!("Total tokens: {}", result.total_tokens));
         self.log.push(format!(
             "Bounding box: {:.1} x {:.1} x {:.1}",
             result.bbox_size[0], result.bbox_size[1], result.bbox_size[2]
@@ -28,8 +33,10 @@ impl CoverageState {
         } else {
             result.frames.iter().map(|f| f.coverage).sum::<f32>() / result.frames.len() as f32
         };
-        self.log.push(format!("Average coverage: {:.1}%", avg_cov * 100.0));
-        self.log.push(format!("Completed in {:.1}ms", result.elapsed_ms));
+        self.log
+            .push(format!("Average coverage: {:.1}%", avg_cov * 100.0));
+        self.log
+            .push(format!("Completed in {:.1}ms", result.elapsed_ms));
         self.result = Some(result);
     }
 }
@@ -38,9 +45,10 @@ pub fn render(f: &mut Frame, state: &mut CoverageState, area: Rect, tick: u64) {
     // Animate: reveal one bar per tick
     if tick.is_multiple_of(2)
         && let Some(ref result) = state.result
-            && state.anim_frame < result.frames.len() {
-                state.anim_frame += 1;
-            }
+        && state.anim_frame < result.frames.len()
+    {
+        state.anim_frame += 1;
+    }
 
     let rows = Layout::vertical([
         Constraint::Length(3),  // command
@@ -60,7 +68,10 @@ pub fn render(f: &mut Frame, state: &mut CoverageState, area: Rect, tick: u64) {
         Paragraph::new(Line::from(vec![
             Span::styled("$ ", theme::cmd_style()),
             Span::styled("mosaicmem inspect", theme::bold(theme::TEXT)),
-            Span::styled(" --trajectory traj.json --coverage", Style::default().fg(theme::TEXT_MUTED)),
+            Span::styled(
+                " --trajectory traj.json --coverage",
+                Style::default().fg(theme::TEXT_MUTED),
+            ),
         ]))
         .block(cmd_block),
         rows[0],
@@ -70,8 +81,8 @@ pub fn render(f: &mut Frame, state: &mut CoverageState, area: Rect, tick: u64) {
     render_coverage_chart(f, state, rows[1], tick);
 
     // Bottom: stats + log
-    let bottom_cols = Layout::horizontal([Constraint::Length(36), Constraint::Min(0)])
-        .split(rows[2]);
+    let bottom_cols =
+        Layout::horizontal([Constraint::Length(36), Constraint::Min(0)]).split(rows[2]);
     render_stats(f, state, bottom_cols[0]);
     render_log(f, state, bottom_cols[1]);
 }
@@ -84,9 +95,11 @@ fn render_coverage_chart(f: &mut Frame, state: &CoverageState, area: Rect, _tick
         .title(Line::from(vec![
             Span::styled(" Per-Frame Coverage ", theme::title_style()),
             Span::styled(
-                format!(" {}/{} frames ",
+                format!(
+                    " {}/{} frames ",
                     state.anim_frame,
-                    state.result.as_ref().map(|r| r.frames.len()).unwrap_or(0)),
+                    state.result.as_ref().map(|r| r.frames.len()).unwrap_or(0)
+                ),
                 Style::default().fg(theme::SLATE),
             ),
         ]));
@@ -94,7 +107,9 @@ fn render_coverage_chart(f: &mut Frame, state: &CoverageState, area: Rect, _tick
     let inner = block.inner(area);
     f.render_widget(block, area);
 
-    if inner.height < 2 || inner.width < 4 { return; }
+    if inner.height < 2 || inner.width < 4 {
+        return;
+    }
 
     let result = match &state.result {
         Some(r) => r,
@@ -117,7 +132,9 @@ fn render_coverage_chart(f: &mut Frame, state: &CoverageState, area: Rect, _tick
     for col_idx in 0..chart_width {
         let start = col_idx * frames_per_col;
         let end = (start + frames_per_col).min(num_frames);
-        if start >= num_frames { break; }
+        if start >= num_frames {
+            break;
+        }
 
         let avg_cov: f32 = result.frames[start..end]
             .iter()
@@ -150,10 +167,7 @@ fn render_coverage_chart(f: &mut Frame, state: &CoverageState, area: Rect, _tick
     // Scale labels
     lines.push(Line::from(vec![
         Span::styled(" 0%", Style::default().fg(theme::DIM)),
-        Span::styled(
-            " ".repeat(chart_width.saturating_sub(8)),
-            Style::default(),
-        ),
+        Span::styled(" ".repeat(chart_width.saturating_sub(8)), Style::default()),
         Span::styled("100%", Style::default().fg(theme::DIM)),
     ]));
 
@@ -186,7 +200,10 @@ fn render_stats(f: &mut Frame, state: &CoverageState, area: Rect) {
             stat_line("Min Cov", &format!("{:.1}%", min_cov), theme::CORAL),
         ]
     } else {
-        vec![Line::from(Span::styled("  Loading...", Style::default().fg(theme::SLATE)))]
+        vec![Line::from(Span::styled(
+            "  Loading...",
+            Style::default().fg(theme::SLATE),
+        ))]
     };
 
     f.render_widget(Paragraph::new(lines).block(block), area);
@@ -212,14 +229,19 @@ fn render_log(f: &mut Frame, state: &CoverageState, area: Rect) {
         })
         .collect();
 
-    let start = items.len().saturating_sub(area.height.saturating_sub(2) as usize);
+    let start = items
+        .len()
+        .saturating_sub(area.height.saturating_sub(2) as usize);
     let visible: Vec<ListItem> = items.into_iter().skip(start).collect();
     f.render_widget(List::new(visible).block(block), area);
 }
 
 fn stat_line<'a>(label: &'a str, value: &str, color: Color) -> Line<'a> {
     Line::from(vec![
-        Span::styled(format!("  {label:10}"), Style::default().fg(theme::TEXT_MUTED)),
+        Span::styled(
+            format!("  {label:10}"),
+            Style::default().fg(theme::TEXT_MUTED),
+        ),
         Span::styled(value.to_string(), theme::bold(color)),
     ])
 }

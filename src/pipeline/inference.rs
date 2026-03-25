@@ -10,6 +10,7 @@ use crate::geometry::fusion::StreamingFusion;
 use crate::memory::retrieval::MemoryRetriever;
 use crate::memory::store::{MemoryConfig, MosaicMemoryStore};
 use crate::pipeline::config::PipelineConfig;
+use rand::{Rng, SeedableRng, rngs::StdRng};
 use thiserror::Error;
 use tracing::debug;
 
@@ -43,6 +44,59 @@ pub struct InferencePipeline {
     pub cross_attention: MemoryCrossAttention,
     /// PRoPE for camera-dependent positional encoding.
     pub prope: PRoPE,
+    rng: StdRng,
+}
+
+/// Extract a single planar `[C, H, W]` frame from a flattened `[B, C, T, H, W]` tensor.
+pub fn extract_frame_planar(
+    data: &[f32],
+    shape: &[usize; 5],
+    frame_idx: usize,
+) -> Option<Vec<f32>> {
+    let [_batch, channels, frames, height, width] = *shape;
+    if channels == 0 || frames == 0 || height == 0 || width == 0 || frame_idx >= frames {
+        return None;
+    }
+
+    let plane = height * width;
+    let channel_stride = frames * plane;
+    let mut frame = vec![0.0f32; channels * plane];
+
+    for channel in 0..channels {
+        let src_start = channel * channel_stride + frame_idx * plane;
+        let src_end = src_start + plane;
+        let dst_start = channel * plane;
+        let dst_end = dst_start + plane;
+        frame[dst_start..dst_end].copy_from_slice(data.get(src_start..src_end)?);
+    }
+
+    Some(frame)
+}
+
+/// Convert a planar `[C, H, W]` frame into interleaved `RGBRGB...` bytes.
+pub fn planar_frame_to_rgb8_interleaved(
+    frame: &[f32],
+    channels: usize,
+    width: usize,
+    height: usize,
+) -> Vec<u8> {
+    let plane = width.saturating_mul(height);
+    let mut bytes = vec![0u8; plane.saturating_mul(3)];
+
+    if plane == 0 || channels == 0 {
+        return bytes;
+    }
+
+    for pixel in 0..plane {
+        for channel in 0..3 {
+            let src_channel = channel.min(channels - 1);
+            let src_idx = src_channel * plane + pixel;
+            let value = frame.get(src_idx).copied().unwrap_or(0.0);
+            bytes[pixel * 3 + channel] = (value.clamp(0.0, 1.0) * 255.0) as u8;
+        }
+    }
+
+    bytes
 }
 
 impl InferencePipeline {
@@ -69,8 +123,13 @@ impl InferencePipeline {
             fusion: StreamingFusion::new(config.voxel_size),
             memory_store: MosaicMemoryStore::new(memory_config),
             retriever,
-            cross_attention: MemoryCrossAttention::new(config.hidden_dim, config.num_heads),
+            cross_attention: MemoryCrossAttention::new_seeded(
+                config.hidden_dim,
+                config.num_heads,
+                config.seed ^ 0xC0A5_5A1C,
+            ),
             prope: PRoPE::new(head_dim, config.num_heads, config.temporal_compression),
+            rng: StdRng::seed_from_u64(config.seed),
             config,
         }
     }
@@ -313,17 +372,9 @@ impl InferencePipeline {
             let pose = &poses[i];
 
             // Estimate depth for this frame
-            let frame_pixels = h * w * 3;
-            let frame_start = i * frame_pixels;
-            let frame_end = frame_start + frame_pixels;
-            let frame_data: Vec<u8> = if frame_end <= frames.len() {
-                frames[frame_start..frame_end]
-                    .iter()
-                    .map(|v| (v.clamp(0.0, 1.0) * 255.0) as u8)
-                    .collect()
-            } else {
-                vec![128u8; frame_pixels]
-            };
+            let frame_data = extract_frame_planar(frames, frame_shape, i)
+                .map(|frame| planar_frame_to_rgb8_interleaved(&frame, 3, w, h))
+                .unwrap_or_else(|| vec![128u8; h * w * 3]);
 
             let depth_map = depth_estimator
                 .estimate_depth(&frame_data, w as u32, h as u32)
@@ -349,14 +400,16 @@ impl InferencePipeline {
             );
 
             // Also update the streaming fusion point cloud
-            let _ = self.fusion.add_keyframe(
-                &frame_data,
-                w as u32,
-                h as u32,
-                &intrinsics,
-                pose,
-                depth_estimator,
-            );
+            self.fusion
+                .add_keyframe(
+                    &frame_data,
+                    w as u32,
+                    h as u32,
+                    &intrinsics,
+                    pose,
+                    depth_estimator,
+                )
+                .map_err(|e| PipelineError::Depth(e.to_string()))?;
         }
 
         Ok(())
@@ -411,10 +464,10 @@ impl InferencePipeline {
     }
 
     /// Initialize random noise for the latent.
-    fn init_noise(&self, size: usize) -> Vec<f32> {
-        use rand::Rng;
-        let mut rng = rand::thread_rng();
-        (0..size).map(|_| rng.r#gen::<f32>() * 2.0 - 1.0).collect()
+    fn init_noise(&mut self, size: usize) -> Vec<f32> {
+        (0..size)
+            .map(|_| self.rng.r#gen::<f32>() * 2.0 - 1.0)
+            .collect()
     }
 
     /// Extract one latent frame from a flattened [B, C, T, H, W] tensor.
@@ -693,6 +746,34 @@ mod tests {
         let frame = pipeline.extract_latent_frame(&latents, &shape, 1).unwrap();
         assert_eq!(frame.len(), 2 * 2 * 2);
         assert_eq!(frame, vec![4.0, 16.0, 5.0, 17.0, 6.0, 18.0, 7.0, 19.0]);
+    }
+
+    #[test]
+    fn test_extract_frame_planar_reorders_cthw() {
+        let shape = [1, 3, 2, 2, 2];
+        let frames: Vec<f32> = (0..shape.iter().product::<usize>())
+            .map(|value| value as f32)
+            .collect();
+
+        let frame = extract_frame_planar(&frames, &shape, 1).unwrap();
+        assert_eq!(
+            frame,
+            vec![
+                4.0, 5.0, 6.0, 7.0, 12.0, 13.0, 14.0, 15.0, 20.0, 21.0, 22.0, 23.0
+            ]
+        );
+    }
+
+    #[test]
+    fn test_planar_frame_to_rgb8_interleaved() {
+        let frame = vec![
+            1.0, 0.0, 0.0, 1.0, // red plane
+            0.0, 1.0, 0.0, 1.0, // green plane
+            0.0, 0.0, 1.0, 1.0, // blue plane
+        ];
+
+        let bytes = planar_frame_to_rgb8_interleaved(&frame, 3, 2, 2);
+        assert_eq!(bytes, vec![255, 0, 0, 0, 255, 0, 0, 0, 255, 255, 255, 255,]);
     }
 
     #[test]
