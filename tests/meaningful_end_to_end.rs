@@ -1,10 +1,10 @@
-use mosaicmem_rs::camera::CameraPose;
-use mosaicmem_rs::diffusion::backbone::SyntheticBackbone;
-use mosaicmem_rs::diffusion::scheduler::DDPMScheduler;
-use mosaicmem_rs::diffusion::vae::SyntheticVAE;
-use mosaicmem_rs::geometry::depth::SyntheticDepthEstimator;
-use mosaicmem_rs::pipeline::config::PipelineConfig;
-use mosaicmem_rs::pipeline::inference::InferencePipeline;
+use mosaicmem::camera::CameraPose;
+use mosaicmem::diffusion::backbone::SyntheticBackbone;
+use mosaicmem::diffusion::scheduler::DDPMScheduler;
+use mosaicmem::diffusion::vae::SyntheticVAE;
+use mosaicmem::geometry::depth::SyntheticDepthEstimator;
+use mosaicmem::pipeline::config::PipelineConfig;
+use mosaicmem::pipeline::inference::InferencePipeline;
 
 fn structured_frame(width: usize, height: usize) -> Vec<f32> {
     let plane = width * height;

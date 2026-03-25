@@ -3,17 +3,17 @@
 //! These tests exercise the full end-to-end pipeline with synthetic backends,
 //! verifying that all components work together correctly.
 
-use mosaicmem_rs::attention::{MemoryCrossAttention, PRoPE, WarpedRoPE};
-use mosaicmem_rs::camera::{CameraIntrinsics, CameraPose, CameraTrajectory};
-use mosaicmem_rs::diffusion::backbone::SyntheticBackbone;
-use mosaicmem_rs::diffusion::scheduler::DDPMScheduler;
-use mosaicmem_rs::diffusion::vae::{SyntheticVAE, VAE};
-use mosaicmem_rs::geometry::depth::{DepthEstimator, SyntheticDepthEstimator};
-use mosaicmem_rs::geometry::fusion::StreamingFusion;
-use mosaicmem_rs::memory::retrieval::MemoryRetriever;
-use mosaicmem_rs::memory::store::{MemoryConfig, MosaicMemoryStore, Patch3D, RetrievedPatch};
-use mosaicmem_rs::pipeline::autoregressive::AutoregressivePipeline;
-use mosaicmem_rs::pipeline::config::PipelineConfig;
+use mosaicmem::attention::{MemoryCrossAttention, PRoPE, WarpedRoPE};
+use mosaicmem::camera::{CameraIntrinsics, CameraPose, CameraTrajectory};
+use mosaicmem::diffusion::backbone::SyntheticBackbone;
+use mosaicmem::diffusion::scheduler::DDPMScheduler;
+use mosaicmem::diffusion::vae::{SyntheticVAE, VAE};
+use mosaicmem::geometry::depth::{DepthEstimator, SyntheticDepthEstimator};
+use mosaicmem::geometry::fusion::StreamingFusion;
+use mosaicmem::memory::retrieval::MemoryRetriever;
+use mosaicmem::memory::store::{MemoryConfig, MosaicMemoryStore, Patch3D, RetrievedPatch};
+use mosaicmem::pipeline::autoregressive::AutoregressivePipeline;
+use mosaicmem::pipeline::config::PipelineConfig;
 use nalgebra::{Point2, Point3, UnitQuaternion, Vector3};
 
 /// Helper: create a circular camera trajectory.

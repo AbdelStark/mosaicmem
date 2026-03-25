@@ -12,7 +12,7 @@
   <a href="https://arxiv.org/abs/2603.17117"><img src="https://img.shields.io/badge/arXiv-2603.17117-b31b1b.svg" alt="arXiv"></a>
   <a href="https://mosaicmem.github.io/mosaicmem/"><img src="https://img.shields.io/badge/Project-Page-blue" alt="Project Page"></a>
   <a href="https://www.youtube.com/watch?v=K3Q9kf8t08I"><img src="https://img.shields.io/badge/Demo-YouTube-red" alt="Demo"></a>
-  <a href="https://crates.io/crates/mosaicmem-rs"><img src="https://img.shields.io/crates/v/mosaicmem-rs.svg" alt="crates.io"></a>
+  <a href="https://crates.io/crates/mosaicmem"><img src="https://img.shields.io/crates/v/mosaicmem.svg" alt="crates.io"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-green.svg" alt="MIT License"></a>
 </p>
 
@@ -20,7 +20,7 @@
 
 Video world models break when the camera moves too far, revisits old areas, or tries to maintain scene structure over long rollouts. **MosaicMem** fixes this with explicit spatial memory -- a geometry-aware memory stack that lifts observed patches into 3D, retrieves them at novel viewpoints, and injects them back into the generation loop.
 
-This Rust implementation (`mosaicmem-rs`) provides the complete memory-side pipeline: streaming 3D reconstruction, patch-level spatial storage, view-conditioned retrieval, geometric alignment via Warped RoPE / Warped Latent, and autoregressive generation plumbing. Ships with deterministic synthetic backends so the **full pipeline runs end-to-end without external model weights**.
+This Rust implementation (`mosaicmem`) provides the complete memory-side pipeline: streaming 3D reconstruction, patch-level spatial storage, view-conditioned retrieval, geometric alignment via Warped RoPE / Warped Latent, and autoregressive generation plumbing. Ships with deterministic synthetic backends so the **full pipeline runs end-to-end without external model weights**.
 
 ## How it works
 
@@ -42,7 +42,7 @@ Target Pose ──> Query Memory ──> Retrieve + Align ──> Condition Diff
 ## Architecture
 
 ```
-mosaicmem-rs/
+mosaicmem/
   src/
     attention/       # PRoPE, Warped RoPE, Warped Latent, memory cross-attention
     camera/          # Intrinsics, poses, trajectory I/O
@@ -85,15 +85,15 @@ cargo run -- demo --num-frames 16 --width 64 --height 64 --steps 5
 ```toml
 # Cargo.toml
 [dependencies]
-mosaicmem-rs = { git = "https://github.com/AbdelStark/mosaicmem.git" }
+mosaicmem = { git = "https://github.com/AbdelStark/mosaicmem.git" }
 ```
 
 ```rust
-use mosaicmem_rs::camera::{CameraPose, CameraTrajectory};
-use mosaicmem_rs::geometry::depth::SyntheticDepthEstimator;
-use mosaicmem_rs::memory::store::{MemoryConfig, MosaicMemoryStore};
-use mosaicmem_rs::pipeline::autoregressive::AutoregressivePipeline;
-use mosaicmem_rs::pipeline::config::PipelineConfig;
+use mosaicmem::camera::{CameraPose, CameraTrajectory};
+use mosaicmem::geometry::depth::SyntheticDepthEstimator;
+use mosaicmem::memory::store::{MemoryConfig, MosaicMemoryStore};
+use mosaicmem::pipeline::autoregressive::AutoregressivePipeline;
+use mosaicmem::pipeline::config::PipelineConfig;
 
 // Build a camera trajectory
 let trajectory = CameraTrajectory::circle(num_frames, radius, height);
@@ -113,7 +113,7 @@ let frames = pipeline.generate(&trajectory, "a living room scene")?;
 ## CLI reference
 
 ```
-mosaicmem-rs <COMMAND>
+mosaicmem <COMMAND>
 
 Commands:
   generate     Generate video frames from a camera trajectory

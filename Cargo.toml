@@ -1,12 +1,15 @@
 [package]
-name = "mosaicmem-rs"
+name = "mosaicmem"
 version = "0.1.0"
+repository = "https://github.com/AbdelStark/mosaicmem"
+keywords = ["video-generation", "world-models", "spatial-memory", "3d-reconstruction", "diffusion"]
+categories = ["computer-vision", "multimedia::video", "science"]
 edition = "2024"
 description = "Rust implementation of MosaicMem: Hybrid Spatial Memory for Video World Models"
 license = "MIT"
 
 [[bin]]
-name = "mosaicmem-rs"
+name = "mosaicmem"
 path = "src/main.rs"
 
 [dependencies]

@@ -3,19 +3,19 @@ use std::path::{Path, PathBuf};
 use tracing::{error, info};
 use tracing_subscriber::EnvFilter;
 
-use mosaicmem_rs::camera::{CameraPose, CameraTrajectory};
-use mosaicmem_rs::diffusion::backbone::SyntheticBackbone;
-use mosaicmem_rs::diffusion::scheduler::DDPMScheduler;
-use mosaicmem_rs::diffusion::vae::SyntheticVAE;
-use mosaicmem_rs::geometry::depth::SyntheticDepthEstimator;
-use mosaicmem_rs::memory::manipulation;
-use mosaicmem_rs::memory::store::{MemoryConfig, MosaicMemoryStore};
-use mosaicmem_rs::pipeline::autoregressive::AutoregressivePipeline;
-use mosaicmem_rs::pipeline::config::PipelineConfig;
+use mosaicmem::camera::{CameraPose, CameraTrajectory};
+use mosaicmem::diffusion::backbone::SyntheticBackbone;
+use mosaicmem::diffusion::scheduler::DDPMScheduler;
+use mosaicmem::diffusion::vae::SyntheticVAE;
+use mosaicmem::geometry::depth::SyntheticDepthEstimator;
+use mosaicmem::memory::manipulation;
+use mosaicmem::memory::store::{MemoryConfig, MosaicMemoryStore};
+use mosaicmem::pipeline::autoregressive::AutoregressivePipeline;
+use mosaicmem::pipeline::config::PipelineConfig;
 
 #[derive(Parser)]
 #[command(
-    name = "mosaicmem-rs",
+    name = "mosaicmem",
     about = "MosaicMem: Hybrid Spatial Memory for Video World Models",
     version
 )]
@@ -186,7 +186,7 @@ enum Commands {
 fn main() {
     tracing_subscriber::fmt()
         .with_env_filter(
-            EnvFilter::from_default_env().add_directive("mosaicmem_rs=info".parse().unwrap()),
+            EnvFilter::from_default_env().add_directive("mosaicmem=info".parse().unwrap()),
         )
         .init();
 
@@ -596,11 +596,11 @@ fn cmd_inspect(
     height: u32,
     show_coverage: bool,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    use mosaicmem_rs::camera::CameraIntrinsics;
-    use mosaicmem_rs::diffusion::vae::VAE;
-    use mosaicmem_rs::geometry::depth::DepthEstimator;
-    use mosaicmem_rs::geometry::fusion::StreamingFusion;
-    use mosaicmem_rs::memory::retrieval::MemoryRetriever;
+    use mosaicmem::camera::CameraIntrinsics;
+    use mosaicmem::diffusion::vae::VAE;
+    use mosaicmem::geometry::depth::DepthEstimator;
+    use mosaicmem::geometry::fusion::StreamingFusion;
+    use mosaicmem::memory::retrieval::MemoryRetriever;
 
     info!("=== MosaicMem Trajectory Inspector ===");
     let trajectory = CameraTrajectory::load_json(trajectory_path)?;
@@ -792,8 +792,8 @@ fn cmd_export_ply(
     height: u32,
     voxel_size: f32,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    use mosaicmem_rs::camera::CameraIntrinsics;
-    use mosaicmem_rs::geometry::fusion::StreamingFusion;
+    use mosaicmem::camera::CameraIntrinsics;
+    use mosaicmem::geometry::fusion::StreamingFusion;
 
     info!("=== PLY Export ===");
     let trajectory = CameraTrajectory::load_json(trajectory_path)?;
