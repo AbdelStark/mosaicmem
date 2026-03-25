@@ -181,6 +181,9 @@ enum Commands {
         #[arg(long, default_value_t = 3)]
         iterations: usize,
     },
+
+    /// Launch the interactive TUI showcase.
+    Tui {},
 }
 
 fn main() {
@@ -285,6 +288,13 @@ fn main() {
         } => {
             if let Err(e) = cmd_bench(num_frames, width, height, steps, iterations) {
                 error!("Benchmark failed: {}", e);
+                std::process::exit(1);
+            }
+        }
+
+        Commands::Tui {} => {
+            if let Err(e) = mosaicmem::tui::run() {
+                error!("TUI error: {}", e);
                 std::process::exit(1);
             }
         }

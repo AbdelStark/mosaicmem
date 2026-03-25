@@ -4,3 +4,4 @@ pub mod diffusion;
 pub mod geometry;
 pub mod memory;
 pub mod pipeline;
+pub mod tui;
