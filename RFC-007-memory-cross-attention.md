@@ -1,2 +1,0 @@
-# RFC-007: Memory Cross-Attention
-Dedicated cross-attention layer in each DiT block: Q from generation tokens, K/V from memory patch tokens. Token assembly: retrieved patches → flatten to token sequence → with Warped RoPE positions. Coverage mask indicates valid memory vs gaps needing inpainting. Ordering in DiT block: self-attention → text cross-attention → memory cross-attention → MLP. Implementation in Burn: q/k/v projections, multi-head attention with optional mask, Warped RoPE on memory keys.
