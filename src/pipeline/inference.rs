@@ -122,9 +122,16 @@ impl InferencePipeline {
             self.apply_warped_latent(&mut mosaic, &poses[0], &intrinsics);
         }
 
-        // Compose memory tokens for backbone conditioning
-        let (memory_tokens, _) = mosaic.compose_tokens();
+        let memory_canvas = if mosaic.patches.is_empty() {
+            None
+        } else {
+            Some(mosaic.compose_latent_canvas(lat_h, lat_w, lat_c))
+        };
+
+        // Compose patch tokens plus a rasterized latent canvas for conditioning.
+        let memory_tokens = self.compose_memory_tokens(&mosaic, memory_canvas.as_ref());
         let has_memory = !memory_tokens.is_empty();
+        let memory_latent = memory_canvas.as_ref().map(|canvas| canvas.to_cthw(lat_t));
 
         // Compute PRoPE camera rotations for this window's poses
         let camera_rotations = if !poses.is_empty() {
@@ -160,6 +167,7 @@ impl InferencePipeline {
                 } else {
                     None
                 },
+                memory_latent: memory_latent.clone(),
                 memory_mask: coverage_mask.clone(),
                 camera_rotations: camera_rotations.clone(),
                 timestep: timestep_f,
@@ -233,7 +241,7 @@ impl InferencePipeline {
         intrinsics: &CameraIntrinsics,
     ) {
         for patch in &mut mosaic.patches {
-            let source_pose = CameraPose::identity(patch.patch.source_timestamp);
+            let source_pose = patch.patch.source_pose.clone();
             let channels = if patch.patch.latent_height * patch.patch.latent_width > 0 {
                 patch.patch.latent.len() / (patch.patch.latent_height * patch.patch.latent_width)
             } else {
@@ -252,7 +260,7 @@ impl InferencePipeline {
                 &source_pose,
                 target_pose,
                 intrinsics,
-                patch.target_depth,
+                patch.patch.source_depth,
             );
 
             // Only use warped latent if it has non-zero content (valid warp)
@@ -321,14 +329,9 @@ impl InferencePipeline {
                 .estimate_depth(&frame_data, w as u32, h as u32)
                 .map_err(|e| PipelineError::Depth(e.to_string()))?;
 
-            // Get latent slice for this frame
-            let lat_frame_size = lat_h * lat_w * lat_c;
             let lat_frame_idx = i / self.config.config_temporal_downsample();
-            let lat_start = lat_frame_idx * lat_frame_size;
-            let lat_end = (lat_start + lat_frame_size).min(latents.len());
-            let lat_slice = if lat_start < latents.len() {
-                &latents[lat_start..lat_end]
-            } else {
+            let Some(lat_slice) = self.extract_latent_frame(&latents, &lat_shape, lat_frame_idx)
+            else {
                 continue;
             };
 
@@ -336,7 +339,7 @@ impl InferencePipeline {
             self.memory_store.insert_keyframe(
                 i,
                 pose.timestamp,
-                lat_slice,
+                &lat_slice,
                 lat_h,
                 lat_w,
                 lat_c,
@@ -414,6 +417,49 @@ impl InferencePipeline {
         (0..size).map(|_| rng.r#gen::<f32>() * 2.0 - 1.0).collect()
     }
 
+    /// Extract one latent frame from a flattened [B, C, T, H, W] tensor.
+    fn extract_latent_frame(
+        &self,
+        latents: &[f32],
+        shape: &[usize; 5],
+        frame_idx: usize,
+    ) -> Option<Vec<f32>> {
+        let [_b, channels, latent_frames, height, width] = *shape;
+        if channels == 0 || latent_frames == 0 || height == 0 || width == 0 {
+            return None;
+        }
+        if frame_idx >= latent_frames {
+            return None;
+        }
+
+        let mut frame = vec![0.0f32; height * width * channels];
+        for c in 0..channels {
+            for y in 0..height {
+                for x in 0..width {
+                    let src_idx = (((c * latent_frames + frame_idx) * height + y) * width) + x;
+                    let dst_idx = ((y * width + x) * channels) + c;
+                    let &value = latents.get(src_idx)?;
+                    frame[dst_idx] = value;
+                }
+            }
+        }
+
+        Some(frame)
+    }
+
+    /// Combine patch tokens with a rasterized latent canvas for backbone conditioning.
+    fn compose_memory_tokens(
+        &self,
+        mosaic: &crate::memory::mosaic::MosaicFrame,
+        memory_canvas: Option<&crate::memory::mosaic::LatentCanvas>,
+    ) -> Vec<Vec<f32>> {
+        let (mut tokens, _) = mosaic.compose_tokens();
+        if let Some(canvas) = memory_canvas {
+            tokens.extend(canvas.to_tokens());
+        }
+        tokens
+    }
+
     /// Get pipeline statistics.
     pub fn stats(&self) -> PipelineStats {
         PipelineStats {
@@ -468,10 +514,12 @@ mod tests {
 
     #[test]
     fn test_generate_window() {
-        let mut config = PipelineConfig::default();
-        config.num_inference_steps = 2; // Fast for testing
-        config.width = 64;
-        config.height = 64;
+        let config = PipelineConfig {
+            num_inference_steps: 2,
+            width: 64,
+            height: 64,
+            ..Default::default()
+        };
 
         let mut pipeline = InferencePipeline::new(config);
         let backbone = SyntheticBackbone::new(0.1);
@@ -492,9 +540,11 @@ mod tests {
 
     #[test]
     fn test_pipeline_uses_diversity_retriever() {
-        let mut config = PipelineConfig::default();
-        config.diversity_radius = 15.0;
-        config.diversity_penalty = 0.3;
+        let config = PipelineConfig {
+            diversity_radius: 15.0,
+            diversity_penalty: 0.3,
+            ..Default::default()
+        };
 
         let pipeline = InferencePipeline::new(config);
         assert_eq!(pipeline.retriever.diversity_radius, 15.0);
@@ -503,8 +553,10 @@ mod tests {
 
     #[test]
     fn test_pipeline_uses_temporal_decay() {
-        let mut config = PipelineConfig::default();
-        config.temporal_decay_half_life = 2.0;
+        let config = PipelineConfig {
+            temporal_decay_half_life: 2.0,
+            ..Default::default()
+        };
 
         let pipeline = InferencePipeline::new(config);
         assert!(
@@ -524,11 +576,13 @@ mod tests {
 
     #[test]
     fn test_adaptive_keyframe_selection() {
-        let mut config = PipelineConfig::default();
-        config.adaptive_keyframes = true;
-        config.keyframe_translation_threshold = 0.3;
-        config.keyframe_angular_threshold = 0.2;
-        config.keyframe_interval = 4;
+        let config = PipelineConfig {
+            adaptive_keyframes: true,
+            keyframe_translation_threshold: 0.3,
+            keyframe_angular_threshold: 0.2,
+            keyframe_interval: 4,
+            ..Default::default()
+        };
 
         let pipeline = InferencePipeline::new(config);
 
@@ -556,9 +610,11 @@ mod tests {
 
     #[test]
     fn test_fixed_keyframe_selection() {
-        let mut config = PipelineConfig::default();
-        config.adaptive_keyframes = false;
-        config.keyframe_interval = 3;
+        let config = PipelineConfig {
+            adaptive_keyframes: false,
+            keyframe_interval: 3,
+            ..Default::default()
+        };
 
         let pipeline = InferencePipeline::new(config);
         let poses: Vec<CameraPose> = (0..9)
@@ -571,12 +627,14 @@ mod tests {
 
     #[test]
     fn test_generate_with_memory_uses_prope_and_coverage() {
-        let mut config = PipelineConfig::default();
-        config.num_inference_steps = 2;
-        config.width = 64;
-        config.height = 64;
-        config.temporal_decay_half_life = 5.0;
-        config.diversity_radius = 10.0;
+        let config = PipelineConfig {
+            num_inference_steps: 2,
+            width: 64,
+            height: 64,
+            temporal_decay_half_life: 5.0,
+            diversity_radius: 10.0,
+            ..Default::default()
+        };
 
         let mut pipeline = InferencePipeline::new(config);
 
@@ -622,5 +680,56 @@ mod tests {
         let mask = vec![vec![true, false, true], vec![false, true, false]];
         let flat = pipeline.flatten_coverage_mask(&mask);
         assert_eq!(flat, vec![true, false, true, false, true, false]);
+    }
+
+    #[test]
+    fn test_extract_latent_frame_reorders_bc_thw_to_hwc() {
+        let pipeline = InferencePipeline::new(PipelineConfig::default());
+        let shape = [1, 2, 3, 2, 2];
+        let latents: Vec<f32> = (0..shape.iter().product::<usize>())
+            .map(|v| v as f32)
+            .collect();
+
+        let frame = pipeline.extract_latent_frame(&latents, &shape, 1).unwrap();
+        assert_eq!(frame.len(), 2 * 2 * 2);
+        assert_eq!(frame, vec![4.0, 16.0, 5.0, 17.0, 6.0, 18.0, 7.0, 19.0]);
+    }
+
+    #[test]
+    fn test_compose_memory_tokens_includes_canvas() {
+        use crate::camera::CameraPose;
+        use crate::memory::mosaic::MosaicFrame;
+        use crate::memory::store::{Patch3D, RetrievedPatch};
+        use nalgebra::{Point2, Point3};
+
+        let pipeline = InferencePipeline::new(PipelineConfig::default());
+        let mosaic = MosaicFrame {
+            target_pose: CameraPose::identity(0.0),
+            patches: vec![RetrievedPatch {
+                patch: Patch3D {
+                    id: 0,
+                    center: Point3::new(0.0, 0.0, 5.0),
+                    source_pose: CameraPose::identity(0.0),
+                    source_frame: 0,
+                    source_timestamp: 0.0,
+                    source_depth: 5.0,
+                    source_rect: [0.0, 0.0, 16.0, 16.0],
+                    latent: vec![1.0; 2 * 2 * 4],
+                    latent_height: 2,
+                    latent_width: 2,
+                },
+                target_position: Point2::new(32.0, 32.0),
+                target_depth: 5.0,
+                visibility_score: 1.0,
+            }],
+            coverage_mask: vec![vec![true; 4]; 4],
+            width: 64,
+            height: 64,
+        };
+
+        let canvas = mosaic.compose_latent_canvas(4, 4, 4);
+        let tokens = pipeline.compose_memory_tokens(&mosaic, Some(&canvas));
+        assert!(tokens.len() > mosaic.compose_tokens().0.len());
+        assert_eq!(tokens[0].len(), 4);
     }
 }

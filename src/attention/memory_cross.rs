@@ -406,8 +406,10 @@ mod tests {
         let patch = Patch3D {
             id: 0,
             center: Point3::new(0.0, 0.0, 5.0),
+            source_pose: CameraPose::identity(0.0),
             source_frame: 0,
             source_timestamp: 0.0,
+            source_depth: 5.0,
             source_rect: [10.0, 10.0, 16.0, 16.0],
             latent: vec![0.5f32; 2 * 2 * 8], // 2x2 patch, 8 channels
             latent_height: 2,
@@ -465,8 +467,10 @@ mod tests {
         let patch = Patch3D {
             id: 0,
             center: Point3::new(0.0, 0.0, 5.0),
+            source_pose: CameraPose::identity(0.0),
             source_frame: 0,
             source_timestamp: 0.0,
+            source_depth: 5.0,
             source_rect: [10.0, 10.0, 16.0, 16.0],
             latent: vec![0.5f32; 2 * 2 * 8],
             latent_height: 2,
@@ -525,8 +529,10 @@ mod tests {
                 patch: Patch3D {
                     id: i as u64,
                     center: Point3::new(i as f32, 0.0, 5.0),
+                    source_pose: CameraPose::identity(0.0),
                     source_frame: 0,
                     source_timestamp: i as f64 * 0.5,
+                    source_depth: 5.0 + i as f32,
                     source_rect: [10.0, 10.0, 16.0, 16.0],
                     latent: vec![0.5f32; 2 * 2 * 8],
                     latent_height: 2,

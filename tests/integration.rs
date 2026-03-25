@@ -346,8 +346,10 @@ fn test_warped_rope_with_real_patches() {
             patch: Patch3D {
                 id: 0,
                 center: Point3::new(0.0, 0.0, 5.0),
+                source_pose: CameraPose::identity(0.0),
                 source_frame: 0,
                 source_timestamp: 0.0,
+                source_depth: 5.0,
                 source_rect: [0.0, 0.0, 16.0, 16.0],
                 latent: vec![0.5; 4],
                 latent_height: 1,
@@ -361,8 +363,10 @@ fn test_warped_rope_with_real_patches() {
             patch: Patch3D {
                 id: 1,
                 center: Point3::new(2.0, 0.0, 5.0),
+                source_pose: CameraPose::identity(0.0),
                 source_frame: 1,
                 source_timestamp: 1.0,
+                source_depth: 5.0,
                 source_rect: [20.0, 0.0, 16.0, 16.0],
                 latent: vec![0.5; 4],
                 latent_height: 1,

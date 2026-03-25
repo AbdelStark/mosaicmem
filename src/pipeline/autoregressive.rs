@@ -206,12 +206,14 @@ mod tests {
 
     #[test]
     fn test_autoregressive_pipeline() {
-        let mut config = PipelineConfig::default();
-        config.num_inference_steps = 2;
-        config.width = 64;
-        config.height = 64;
-        config.window_size = 4;
-        config.window_overlap = 1;
+        let config = PipelineConfig {
+            num_inference_steps: 2,
+            width: 64,
+            height: 64,
+            window_size: 4,
+            window_overlap: 1,
+            ..Default::default()
+        };
 
         let mut pipeline = AutoregressivePipeline::new(config);
 

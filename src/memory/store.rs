@@ -11,10 +11,14 @@ pub struct Patch3D {
     pub id: u64,
     /// 3D center position in world coordinates.
     pub center: Point3<f32>,
+    /// Source camera pose for this patch.
+    pub source_pose: CameraPose,
     /// Source frame index.
     pub source_frame: usize,
     /// Source frame timestamp.
     pub source_timestamp: f64,
+    /// Depth of the patch center in the source camera frame.
+    pub source_depth: f32,
     /// 2D bounding box in source frame (top-left x, y, width, height).
     pub source_rect: [f32; 4],
     /// Latent feature vector (from VAE encoding of the patch).
@@ -253,8 +257,10 @@ impl MosaicMemoryStore {
                 let patch = Patch3D {
                     id: self.next_id,
                     center: world_center,
+                    source_pose: pose.clone(),
                     source_frame: frame_index,
                     source_timestamp: timestamp,
+                    source_depth: depth,
                     source_rect,
                     latent,
                     latent_height: ph,
@@ -576,5 +582,15 @@ mod tests {
         let ids = store.insert_keyframe_params(&params);
         assert!(!ids.is_empty());
         assert!(store.num_patches() > 0);
+    }
+
+    #[test]
+    fn test_insert_keyframe_records_source_provenance() {
+        let store = make_store_with_patches();
+        let patch = &store.patches[0];
+        assert_eq!(patch.source_frame, 0);
+        assert_eq!(patch.source_timestamp, 0.0);
+        assert!((patch.source_depth - 5.0).abs() < 1e-5);
+        assert_eq!(patch.source_pose.timestamp, 0.0);
     }
 }

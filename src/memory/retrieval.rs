@@ -229,8 +229,10 @@ mod tests {
             patch: Patch3D {
                 id,
                 center: Point3::new(0.0, 0.0, 5.0),
+                source_pose: CameraPose::identity(0.0),
                 source_frame: 0,
                 source_timestamp: 0.0,
+                source_depth: 5.0,
                 source_rect: [0.0, 0.0, 16.0, 16.0],
                 latent: vec![0.5; 4],
                 latent_height: 1,

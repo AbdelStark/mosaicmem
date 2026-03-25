@@ -14,6 +14,10 @@ pub fn compute_planar_homography(
     intrinsics: &CameraIntrinsics,
     plane_depth: f32,
 ) -> Matrix3<f32> {
+    if !plane_depth.is_finite() || plane_depth <= 1e-6 {
+        return Matrix3::identity();
+    }
+
     let k = intrinsics.matrix();
     let k_inv = intrinsics.inverse_matrix();
 
@@ -150,5 +154,42 @@ mod tests {
         let identity = Matrix3::identity();
         let warped = warp_latent(&latent, h, w, c, &identity);
         assert_eq!(warped.len(), h * w * c);
+    }
+
+    #[test]
+    fn test_source_pose_changes_warp() {
+        let intrinsics = CameraIntrinsics::new(100.0, 100.0, 50.0, 50.0, 100, 100);
+        let source_pose = CameraPose::from_translation_rotation(
+            0.0,
+            nalgebra::Vector3::new(1.0, 0.0, 0.0),
+            nalgebra::UnitQuaternion::identity(),
+        );
+        let target_pose = CameraPose::identity(0.0);
+        let latent = vec![
+            0.0, 1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0, 10.0, 11.0, 12.0, 13.0, 14.0, 15.0,
+        ];
+
+        let warped_with_source = warp_patch_latent(
+            &latent,
+            4,
+            4,
+            1,
+            &source_pose,
+            &target_pose,
+            &intrinsics,
+            5.0,
+        );
+        let warped_identity = warp_patch_latent(
+            &latent,
+            4,
+            4,
+            1,
+            &target_pose,
+            &target_pose,
+            &intrinsics,
+            5.0,
+        );
+
+        assert_ne!(warped_with_source, warped_identity);
     }
 }
