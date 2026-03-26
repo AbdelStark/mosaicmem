@@ -189,13 +189,17 @@ enum Commands {
 }
 
 fn main() {
-    tracing_subscriber::fmt()
-        .with_env_filter(
-            EnvFilter::from_default_env().add_directive("mosaicmem=info".parse().unwrap()),
-        )
-        .init();
-
     let cli = Cli::parse();
+
+    // In TUI mode, suppress tracing output to stderr — it corrupts the ratatui rendering.
+    // Logs from pipeline internals (info!, debug!) would otherwise write over the terminal UI.
+    if !matches!(cli.command, Commands::Tui {}) {
+        tracing_subscriber::fmt()
+            .with_env_filter(
+                EnvFilter::from_default_env().add_directive("mosaicmem=info".parse().unwrap()),
+            )
+            .init();
+    }
 
     match cli.command {
         Commands::Generate {
