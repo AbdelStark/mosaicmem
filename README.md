@@ -4,8 +4,8 @@
     <strong>Hybrid Spatial Memory for Video World Models</strong>
   </p>
   <p align="center">
-    Rust implementation of <a href="https://arxiv.org/abs/2603.17117">MosaicMem</a> &mdash; a 3D-aware memory architecture<br>
-    that gives diffusion-based video generators persistent spatial understanding.
+    Rust implementation of <a href="https://arxiv.org/abs/2603.17117">MosaicMem</a> &mdash; a synthetic scaffold for the paper-faithful system,<br>
+    with an explicit path toward checkpoint-backed real execution once a real backend is configured.
   </p>
 </p>
 
@@ -87,6 +87,15 @@ cargo run -- demo --num-frames 16 --width 64 --height 64 --steps 5
 ```
 
 The demo writes synthetic frames, a point cloud, a trajectory file, and a serialized memory store to `demo_output/`.
+
+## Backend Modes
+
+`mosaicmem` now exposes explicit backend modes in both config and CLI output:
+
+- `synthetic` is the default fast-test path used throughout the current demo, benchmark, inspection, and TUI flows.
+- `real` is reserved for checkpoint-backed execution and requires both the `real-backend` Cargo feature and a checkpoint path in `PipelineConfig`.
+
+Every CLI command prints its active backend as `[synthetic]` or `[real]` so synthetic scaffold runs are not mistaken for full paper reproduction.
 
 ## Core Concepts
 

@@ -1,7 +1,10 @@
+use crate::backend::{AblationConfig, BackendMode};
 use serde::{Deserialize, Serialize};
+use std::path::PathBuf;
 
 /// Configuration for the MosaicMem inference pipeline.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
 pub struct PipelineConfig {
     /// Number of denoising steps per window.
     pub num_inference_steps: usize,
@@ -33,6 +36,12 @@ pub struct PipelineConfig {
     pub depth_base: f32,
     /// Random seed.
     pub seed: u64,
+    /// Runtime backend selection.
+    pub backend_mode: BackendMode,
+    /// Optional checkpoint path used when `backend_mode` is `real`.
+    pub checkpoint_path: Option<PathBuf>,
+    /// Operator-level ablation toggles for memory conditioning.
+    pub ablation: AblationConfig,
     /// Spatial diversity radius in target 2D pixels for retrieval.
     /// Set to 0.0 to disable diversity filtering.
     pub diversity_radius: f32,
@@ -48,7 +57,7 @@ pub struct PipelineConfig {
     pub keyframe_angular_threshold: f32,
     /// Temporal compression factor for PRoPE (e.g. 4 frames → 1 latent frame).
     pub temporal_compression: usize,
-    /// Enable warped latent feature-space alignment.
+    /// Legacy top-level warped latent toggle kept for backward compatibility.
     pub enable_warped_latent: bool,
 }
 
@@ -72,6 +81,9 @@ impl Default for PipelineConfig {
             voxel_size: 0.05,
             depth_base: 5.0,
             seed: 42,
+            backend_mode: BackendMode::default(),
+            checkpoint_path: None,
+            ablation: AblationConfig::default(),
             diversity_radius: 20.0,
             diversity_penalty: 0.5,
             temporal_decay_half_life: 5.0,
@@ -96,6 +108,10 @@ impl PipelineConfig {
 
     pub fn latent_frames(&self) -> usize {
         (self.window_size / self.temporal_downsample).max(1)
+    }
+
+    pub fn warped_latent_enabled(&self) -> bool {
+        self.enable_warped_latent && self.ablation.enable_warped_latent
     }
 }
 
@@ -144,5 +160,7 @@ mod tests {
         let deserialized: PipelineConfig = serde_json::from_str(&json).unwrap();
         assert_eq!(deserialized.width, config.width);
         assert_eq!(deserialized.seed, config.seed);
+        assert_eq!(deserialized.backend_mode, BackendMode::Synthetic);
+        assert!(deserialized.warped_latent_enabled());
     }
 }

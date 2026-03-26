@@ -1,13 +1,15 @@
 use crate::camera::{CameraIntrinsics, CameraPose};
 use crate::geometry::projection::frustum_cull;
 use kiddo::SquaredEuclidean;
-use nalgebra::{Point2, Point3};
+use nalgebra::{Point2, Point3, Vector3};
 use serde::{Deserialize, Serialize};
+use thiserror::Error;
 
 type SpatialKdTree = kiddo::float::kdtree::KdTree<f32, u64, 3, 256, u32>;
 
 /// A 3D patch stored in memory with provenance.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
 pub struct Patch3D {
     /// Unique patch ID.
     pub id: u64,
@@ -28,6 +30,105 @@ pub struct Patch3D {
     /// Patch size in the latent grid.
     pub latent_height: usize,
     pub latent_width: usize,
+    /// Per-token source-frame coordinates for dense reprojection.
+    pub token_coords: Vec<(f32, f32)>,
+    /// Optional per-token depth samples aligned with `token_coords`.
+    pub depth_tile: Option<Vec<f32>>,
+    /// Source camera intrinsics used when the patch was captured.
+    pub source_intrinsics: CameraIntrinsics,
+    /// Optional local normal estimate for future geometry-aware operators.
+    pub normal_estimate: Option<Vector3<f32>>,
+    /// Canonical latent shape `(C, H, W)`.
+    pub latent_shape: (usize, usize, usize),
+}
+
+pub type PatchMetadata = Patch3D;
+
+#[derive(Debug, Error, PartialEq, Eq)]
+pub enum PatchGeometryError {
+    #[error("token coordinate count mismatch: expected {expected}, got {actual}")]
+    TokenCoordsLen { expected: usize, actual: usize },
+    #[error("depth tile count mismatch: expected {expected}, got {actual}")]
+    DepthTileLen { expected: usize, actual: usize },
+    #[error("latent data count mismatch: expected {expected}, got {actual}")]
+    LatentLen { expected: usize, actual: usize },
+}
+
+impl Default for Patch3D {
+    fn default() -> Self {
+        Self {
+            id: 0,
+            center: Point3::origin(),
+            source_pose: CameraPose::identity(0.0),
+            source_frame: 0,
+            source_timestamp: 0.0,
+            source_depth: 0.0,
+            source_rect: [0.0; 4],
+            latent: Vec::new(),
+            latent_height: 0,
+            latent_width: 0,
+            token_coords: Vec::new(),
+            depth_tile: None,
+            source_intrinsics: CameraIntrinsics::default(),
+            normal_estimate: None,
+            latent_shape: (0, 0, 0),
+        }
+    }
+}
+
+impl Patch3D {
+    pub fn resolved_latent_shape(&self) -> (usize, usize, usize) {
+        if self.latent_shape != (0, 0, 0) {
+            self.latent_shape
+        } else {
+            let channels = if self.latent_height > 0 && self.latent_width > 0 {
+                self.latent.len() / (self.latent_height * self.latent_width)
+            } else {
+                0
+            };
+            (channels, self.latent_height, self.latent_width)
+        }
+    }
+
+    pub fn channels(&self) -> usize {
+        self.resolved_latent_shape().0
+    }
+
+    pub fn token_count(&self) -> usize {
+        let (_, height, width) = self.resolved_latent_shape();
+        height * width
+    }
+
+    pub fn validate_geometry(&self) -> Result<(), PatchGeometryError> {
+        let (channels, height, width) = self.resolved_latent_shape();
+        let expected_tokens = height * width;
+        let expected_latent = channels * expected_tokens;
+
+        if !self.token_coords.is_empty() && self.token_coords.len() != expected_tokens {
+            return Err(PatchGeometryError::TokenCoordsLen {
+                expected: expected_tokens,
+                actual: self.token_coords.len(),
+            });
+        }
+
+        if let Some(depth_tile) = &self.depth_tile
+            && depth_tile.len() != expected_tokens
+        {
+            return Err(PatchGeometryError::DepthTileLen {
+                expected: expected_tokens,
+                actual: depth_tile.len(),
+            });
+        }
+
+        if expected_latent != 0 && self.latent.len() != expected_latent {
+            return Err(PatchGeometryError::LatentLen {
+                expected: expected_latent,
+                actual: self.latent.len(),
+            });
+        }
+
+        Ok(())
+    }
 }
 
 /// A retrieved patch with warped coordinates for the target view.
@@ -255,6 +356,12 @@ impl MosaicMemoryStore {
                     pw as f32 / latent_w as f32 * img_w,
                     ph as f32 / latent_h as f32 * img_h,
                 ];
+                let token_coords = build_token_coords(source_rect, pw, ph);
+                let depth_tile = if token_coords.is_empty() {
+                    None
+                } else {
+                    Some(sample_depth_tile(&token_coords, depth_map))
+                };
 
                 let patch = Patch3D {
                     id: self.next_id,
@@ -267,6 +374,11 @@ impl MosaicMemoryStore {
                     latent,
                     latent_height: ph,
                     latent_width: pw,
+                    token_coords,
+                    depth_tile,
+                    source_intrinsics: intrinsics.clone(),
+                    normal_estimate: None,
+                    latent_shape: (channels, ph, pw),
                 };
 
                 self.patches.push(patch);
@@ -328,8 +440,9 @@ impl MosaicMemoryStore {
                 let pixel = intrinsics.project(&cam_point)?;
 
                 // Visibility score: closer and more centered patches score higher
-                let center_dist = ((pixel.x - intrinsics.cx) / intrinsics.width as f32).powi(2)
-                    + ((pixel.y - intrinsics.cy) / intrinsics.height as f32).powi(2);
+                let center_dist =
+                    ((pixel.x - intrinsics.cx as f32) / intrinsics.width as f32).powi(2)
+                        + ((pixel.y - intrinsics.cy as f32) / intrinsics.height as f32).powi(2);
                 let depth_score = 1.0 / (1.0 + cam_point.z * 0.1);
                 let mut visibility_score = (1.0 - center_dist.sqrt()).max(0.0) * depth_score;
 
@@ -423,11 +536,49 @@ impl MosaicMemoryStore {
 
     /// Get total latent token count across all patches.
     pub fn total_tokens(&self) -> usize {
-        self.patches
-            .iter()
-            .map(|p| p.latent_height * p.latent_width)
-            .sum()
+        self.patches.iter().map(Patch3D::token_count).sum()
     }
+}
+
+fn build_token_coords(source_rect: [f32; 4], latent_width: usize, latent_height: usize) -> Vec<(f32, f32)> {
+    if latent_width == 0 || latent_height == 0 {
+        return Vec::new();
+    }
+
+    let [x, y, width, height] = source_rect;
+    let step_x = width / latent_width as f32;
+    let step_y = height / latent_height as f32;
+
+    let mut coords = Vec::with_capacity(latent_width * latent_height);
+    for row in 0..latent_height {
+        for col in 0..latent_width {
+            coords.push((
+                x + (col as f32 + 0.5) * step_x,
+                y + (row as f32 + 0.5) * step_y,
+            ));
+        }
+    }
+    coords
+}
+
+fn sample_depth_tile(token_coords: &[(f32, f32)], depth_map: &[Vec<f32>]) -> Vec<f32> {
+    token_coords
+        .iter()
+        .map(|(u, v)| sample_depth(depth_map, *u, *v))
+        .collect()
+}
+
+fn sample_depth(depth_map: &[Vec<f32>], u: f32, v: f32) -> f32 {
+    let Some(first_row) = depth_map.first() else {
+        return 1.0;
+    };
+    if first_row.is_empty() {
+        return 1.0;
+    }
+
+    let y = v.round().clamp(0.0, (depth_map.len() - 1) as f32) as usize;
+    let x = u.round().clamp(0.0, (first_row.len() - 1) as f32) as usize;
+    depth_map[y][x]
 }
 
 #[cfg(test)]

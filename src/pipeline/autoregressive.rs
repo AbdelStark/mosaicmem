@@ -1,3 +1,4 @@
+use crate::backend::{BackendError, validate_backend_configuration};
 use crate::camera::CameraTrajectory;
 use crate::diffusion::backbone::DiffusionBackbone;
 use crate::diffusion::scheduler::NoiseScheduler;
@@ -74,8 +75,13 @@ fn blend_overlap(
 
 impl AutoregressivePipeline {
     pub fn new(config: PipelineConfig) -> Self {
+        Self::try_new(config).expect("invalid backend configuration for autoregressive pipeline")
+    }
+
+    pub fn try_new(config: PipelineConfig) -> Result<Self, BackendError> {
+        validate_backend_configuration(config.backend_mode, config.checkpoint_path.as_deref())?;
         let pipeline = InferencePipeline::new(config.clone());
-        Self { pipeline, config }
+        Ok(Self { pipeline, config })
     }
 
     /// Generate a full video from a camera trajectory.
