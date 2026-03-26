@@ -24,43 +24,26 @@ Standard video diffusion models forget. Move the camera forward, turn around, an
 ## Architecture
 
 ```
-                        ┌─────────────────────────────────────────────────────┐
-                        │              Autoregressive Pipeline                │
-                        │                                                     │
-  Camera Trajectory ───▶│  ┌──────────┐   ┌──────────┐   ┌───────────────┐  │
-  [SE3 poses]           │  │ Keyframe │   │  Depth   │   │   Streaming   │  │
-                        │  │ Selector │──▶│Estimator │──▶│    Fusion     │  │
-                        │  └──────────┘   └──────────┘   └───────┬───────┘  │
-                        │                                        │          │
-                        │                                        ▼          │
-                        │                                ┌───────────────┐  │
-                        │                                │ 3D Patch      │  │
-                        │                                │ Memory Store  │  │
-                        │                                │ (KD-tree)     │  │
-                        │                                └───────┬───────┘  │
-                        │                                        │          │
-                        │  Target Pose ──▶ Frustum Cull ──▶ Retrieve Top-K  │
-                        │                                        │          │
-                        │         ┌──────────────────────────────┤          │
-                        │         │              │               │          │
-                        │         ▼              ▼               ▼          │
-                        │  ┌────────────┐ ┌───────────┐ ┌──────────────┐   │
-                        │  │  Warped    │ │  Warped   │ │   Coverage   │   │
-                        │  │   RoPE     │ │  Latent   │ │    Mask      │   │
-                        │  └─────┬──────┘ └─────┬─────┘ └──────┬───────┘   │
-                        │        │              │              │            │
-                        │        └──────────┬───┘──────────────┘            │
-                        │                   ▼                               │
-                        │  ┌──────────────────────────────────────────┐     │
-                        │  │  DiT Denoising Loop (conditioned on     │     │
-                        │  │  memory cross-attention + PRoPE)         │     │
-                        │  └──────────────────┬───────────────────────┘     │
-                        │                     │                             │
-                        │                     ▼                             │
-                        │              ┌─────────────┐                      │
-                        │              │  VAE Decode  │──▶ Frames           │
-                        │              └─────────────┘                      │
-                        └─────────────────────────────────────────────────────┘
+Trajectory ──▶ Keyframes ──▶ Depth ──▶ Fusion
+[SE3 poses]                               │
+                                          ▼
+                                    Patch Memory
+                                      (KD-tree)
+                                          │
+   Target Pose ──▶ Frustum Cull ──▶ Retrieve Top-K
+                                          │
+                 ┌────────────────────────┼────────────────────────┐
+                 │                        │                        │
+                 ▼                        ▼                        ▼
+           Warped RoPE              Warped Latent            Coverage Mask
+                 │                        │                        │
+                 └────────────────────────┼────────────────────────┘
+                                          │
+                                          ▼
+                  DiT Denoising (cross-attn + PRoPE)
+                                          │
+                                          ▼
+                                     VAE Decode ──▶ Frames
 ```
 
 ## Quick Start
