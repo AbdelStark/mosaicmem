@@ -8,6 +8,10 @@ edition = "2024"
 description = "Rust implementation of MosaicMem: Hybrid Spatial Memory for Video World Models"
 license = "MIT"
 
+[features]
+default = []
+real-backend = []
+
 [[bin]]
 name = "mosaicmem"
 path = "src/main.rs"

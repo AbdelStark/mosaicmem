@@ -424,6 +424,11 @@ mod tests {
             latent: vec![0.5f32; 2 * 2 * 8], // 2x2 patch, 8 channels
             latent_height: 2,
             latent_width: 2,
+            token_coords: vec![(18.0, 18.0); 4],
+            depth_tile: Some(vec![5.0; 4]),
+            source_intrinsics: CameraIntrinsics::default(),
+            normal_estimate: None,
+            latent_shape: (8, 2, 2),
         };
 
         let retrieved = RetrievedPatch {
@@ -485,6 +490,11 @@ mod tests {
             latent: vec![0.5f32; 2 * 2 * 8],
             latent_height: 2,
             latent_width: 2,
+            token_coords: vec![(18.0, 18.0); 4],
+            depth_tile: Some(vec![5.0; 4]),
+            source_intrinsics: CameraIntrinsics::default(),
+            normal_estimate: None,
+            latent_shape: (8, 2, 2),
         };
         let retrieved = RetrievedPatch {
             patch,
@@ -547,6 +557,11 @@ mod tests {
                     latent: vec![0.5f32; 2 * 2 * 8],
                     latent_height: 2,
                     latent_width: 2,
+                    token_coords: vec![(18.0, 18.0); 4],
+                    depth_tile: Some(vec![5.0; 4]),
+                    source_intrinsics: CameraIntrinsics::default(),
+                    normal_estimate: None,
+                    latent_shape: (8, 2, 2),
                 },
                 target_position: Point2::new(30.0 + i as f32 * 20.0, 50.0),
                 target_depth: 5.0 + i as f32,

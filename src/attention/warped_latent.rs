@@ -18,8 +18,8 @@ pub fn compute_planar_homography(
         return Matrix3::identity();
     }
 
-    let k = intrinsics.matrix();
-    let k_inv = intrinsics.inverse_matrix();
+    let k = intrinsics.matrix_f32();
+    let k_inv = intrinsics.inverse_matrix_f32();
 
     // Relative transformation: target * source^{-1}
     let relative = target_pose.world_to_camera * source_pose.world_to_camera.inverse();

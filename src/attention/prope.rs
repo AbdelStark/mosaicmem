@@ -39,7 +39,7 @@ impl PRoPE {
         poses: &[CameraPose],
         intrinsics: &CameraIntrinsics,
     ) -> Vec<Vec<[f32; 2]>> {
-        let k = intrinsics.matrix();
+        let k = intrinsics.matrix_f32();
         let half_dim = self.head_dim / 2;
 
         poses

@@ -1,4 +1,5 @@
 use clap::{Parser, Subcommand};
+use mosaicmem::BackendMode;
 use std::path::{Path, PathBuf};
 use tracing::{error, info};
 use tracing_subscriber::EnvFilter;
@@ -406,12 +407,6 @@ fn cmd_generate(args: &GenerateArgs) -> Result<(), Box<dyn std::error::Error>> {
         window_overlap,
         seed,
     } = args;
-    info!("Loading trajectory from {:?}", trajectory_path);
-    let trajectory = CameraTrajectory::load_json(trajectory_path)?;
-    info!("Loaded {} poses", trajectory.len());
-
-    std::fs::create_dir_all(output_dir)?;
-
     let config = PipelineConfig {
         num_inference_steps: *steps,
         width: *width,
@@ -421,9 +416,19 @@ fn cmd_generate(args: &GenerateArgs) -> Result<(), Box<dyn std::error::Error>> {
         seed: *seed,
         ..Default::default()
     };
+    let backend_label = config.backend_mode.label();
 
-    info!("Initializing pipeline (using synthetic models for MVP)");
-    let mut pipeline = AutoregressivePipeline::new(config);
+    info!(
+        "{} Loading trajectory from {:?}",
+        backend_label, trajectory_path
+    );
+    let trajectory = CameraTrajectory::load_json(trajectory_path)?;
+    info!("{} Loaded {} poses", backend_label, trajectory.len());
+
+    std::fs::create_dir_all(output_dir)?;
+
+    info!("{} Initializing pipeline", backend_label);
+    let mut pipeline = AutoregressivePipeline::try_new(config)?;
 
     let backbone = SyntheticBackbone::new(0.1);
     let scheduler = DDPMScheduler::linear(1000, 1e-4, 0.02);
@@ -433,7 +438,7 @@ fn cmd_generate(args: &GenerateArgs) -> Result<(), Box<dyn std::error::Error>> {
     // Simple text embedding (placeholder)
     let text_emb = vec![vec![0.0f32; 64]; 10];
 
-    info!("Generating with prompt: \"{}\"", prompt);
+    info!("{} Generating with prompt: \"{}\"", backend_label, prompt);
     let output_dir_clone = output_dir.to_path_buf();
     let (frames, shapes) = pipeline.generate(
         &trajectory,
@@ -495,6 +500,7 @@ fn cmd_generate(args: &GenerateArgs) -> Result<(), Box<dyn std::error::Error>> {
 }
 
 fn cmd_visualize(trajectory_path: &Path) -> Result<(), Box<dyn std::error::Error>> {
+    info!("{} Visualize trajectory", BackendMode::Synthetic.label());
     let trajectory = CameraTrajectory::load_json(trajectory_path)?;
     info!("Trajectory: {} poses", trajectory.len());
     info!("Duration: {:.2}s", trajectory.duration());
@@ -520,7 +526,7 @@ fn cmd_splice(
     layout: &str,
     offset: f32,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    info!("Loading trajectories...");
+    info!("{} Loading trajectories...", BackendMode::Synthetic.label());
     let traj_a = CameraTrajectory::load_json(trajectory_a)?;
     let traj_b = CameraTrajectory::load_json(trajectory_b)?;
 
@@ -556,10 +562,20 @@ fn cmd_demo(
     height: u32,
     steps: usize,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    info!("=== MosaicMem Demo (Synthetic Models) ===");
+    let config = PipelineConfig {
+        num_inference_steps: steps,
+        width,
+        height,
+        window_size: num_frames.min(16),
+        window_overlap: 2,
+        ..Default::default()
+    };
+    let backend_label = config.backend_mode.label();
+
+    info!("{} === MosaicMem Demo ===", backend_label);
     info!(
-        "Frames: {}, Resolution: {}x{}, Steps: {}",
-        num_frames, width, height, steps
+        "{} Frames: {}, Resolution: {}x{}, Steps: {}",
+        backend_label, num_frames, width, height, steps
     );
 
     // Create a circular camera trajectory
@@ -577,26 +593,25 @@ fn cmd_demo(
             .collect(),
     );
 
-    info!("Created circular trajectory: {} poses", trajectory.len());
-    info!("Path length: {:.2} units", trajectory.path_length());
+    info!(
+        "{} Created circular trajectory: {} poses",
+        backend_label,
+        trajectory.len()
+    );
+    info!(
+        "{} Path length: {:.2} units",
+        backend_label,
+        trajectory.path_length()
+    );
 
-    let config = PipelineConfig {
-        num_inference_steps: steps,
-        width,
-        height,
-        window_size: num_frames.min(16),
-        window_overlap: 2,
-        ..Default::default()
-    };
-
-    let mut pipeline = AutoregressivePipeline::new(config);
+    let mut pipeline = AutoregressivePipeline::try_new(config)?;
     let backbone = SyntheticBackbone::new(0.1);
     let scheduler = DDPMScheduler::linear(1000, 1e-4, 0.02);
     let vae = SyntheticVAE::new(8, 4, 16);
     let depth = SyntheticDepthEstimator::new(5.0, 1.0);
     let text_emb = vec![vec![0.0f32; 64]; 10];
 
-    info!("Running autoregressive generation...");
+    info!("{} Running autoregressive generation...", backend_label);
     let (frames, shapes) = pipeline.generate(
         &trajectory,
         &text_emb,
@@ -692,7 +707,10 @@ fn cmd_inspect(
 ) -> Result<(), Box<dyn std::error::Error>> {
     use mosaicmem::memory::retrieval::MemoryRetriever;
 
-    info!("=== MosaicMem Trajectory Inspector ===");
+    info!(
+        "{} === MosaicMem Trajectory Inspector ===",
+        BackendMode::Synthetic.label()
+    );
     let trajectory = CameraTrajectory::load_json(trajectory_path)?;
     info!("Trajectory: {} poses", trajectory.len());
     info!("Duration: {:.2}s", trajectory.duration());
@@ -807,6 +825,7 @@ fn cmd_show_config(config_path: Option<&Path>) -> Result<(), Box<dyn std::error:
 
     let json = serde_json::to_string_pretty(&config)?;
     println!("{json}");
+    println!("\n# Backend mode: {}", config.backend_mode);
 
     // Also show derived dimensions
     println!("\n# Derived dimensions:");
@@ -834,7 +853,7 @@ fn cmd_export_ply(
     height: u32,
     voxel_size: f32,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    info!("=== PLY Export ===");
+    info!("{} === PLY Export ===", BackendMode::Synthetic.label());
     let trajectory = CameraTrajectory::load_json(trajectory_path)?;
     info!("Trajectory: {} poses", trajectory.len());
 
@@ -869,12 +888,6 @@ fn cmd_bench(
 ) -> Result<(), Box<dyn std::error::Error>> {
     use std::time::Instant;
 
-    info!("=== MosaicMem Pipeline Benchmark ===");
-    info!(
-        "Frames: {}, Resolution: {}x{}, Steps: {}, Iterations: {}",
-        num_frames, width, height, steps, iterations
-    );
-
     let config = PipelineConfig {
         num_inference_steps: steps,
         width,
@@ -883,6 +896,13 @@ fn cmd_bench(
         window_overlap: 2,
         ..Default::default()
     };
+    let backend_label = config.backend_mode.label();
+
+    info!("{} === MosaicMem Pipeline Benchmark ===", backend_label);
+    info!(
+        "{} Frames: {}, Resolution: {}x{}, Steps: {}, Iterations: {}",
+        backend_label, num_frames, width, height, steps, iterations
+    );
 
     let backbone = SyntheticBackbone::new(0.1);
     let scheduler = DDPMScheduler::linear(1000, 1e-4, 0.02);
@@ -907,7 +927,7 @@ fn cmd_bench(
     let mut durations = Vec::with_capacity(iterations);
 
     for iter in 0..iterations {
-        let mut pipeline = AutoregressivePipeline::new(config.clone());
+        let mut pipeline = AutoregressivePipeline::try_new(config.clone())?;
         let start = Instant::now();
 
         let (frames, shapes) = pipeline.generate(

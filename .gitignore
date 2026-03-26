@@ -22,3 +22,10 @@ Thumbs.db
 .claude/tsc-cache/
 .tldr/
 .tldrignore
+
+# Rust build artifacts
+debug/
+release/
+*.rlib
+*.prof*
+*.log

@@ -170,14 +170,23 @@ impl InferencePipeline {
         let intrinsics =
             CameraIntrinsics::default_for_resolution(self.config.width, self.config.height);
 
-        // Retrieve memory with temporal decay applied
+        // Retrieve memory with temporal decay applied when memory conditioning is enabled.
         let query_time = Some(poses[0].timestamp);
-        let mut mosaic =
+        let mut mosaic = if self.config.ablation.enable_memory {
             self.retriever
-                .retrieve_at_time(&self.memory_store, &poses[0], &intrinsics, query_time);
+                .retrieve_at_time(&self.memory_store, &poses[0], &intrinsics, query_time)
+        } else {
+            crate::memory::mosaic::MosaicFrame {
+                target_pose: poses[0].clone(),
+                patches: Vec::new(),
+                coverage_mask: Vec::new(),
+                width: intrinsics.width,
+                height: intrinsics.height,
+            }
+        };
 
         // Apply warped latent feature-space alignment to retrieved patches
-        if self.config.enable_warped_latent && !mosaic.patches.is_empty() {
+        if self.config.warped_latent_enabled() && !mosaic.patches.is_empty() {
             self.apply_warped_latent(&mut mosaic, &poses[0], &intrinsics);
         }
 
@@ -211,7 +220,7 @@ impl InferencePipeline {
             mosaic.patches.len(),
             mosaic.coverage_ratio() * 100.0,
             poses.len(),
-            self.config.enable_warped_latent,
+            self.config.warped_latent_enabled(),
         );
 
         // Denoising loop
@@ -798,6 +807,11 @@ mod tests {
                     latent: vec![1.0; 2 * 2 * 4],
                     latent_height: 2,
                     latent_width: 2,
+                    token_coords: vec![(8.0, 8.0); 4],
+                    depth_tile: Some(vec![5.0; 4]),
+                    source_intrinsics: CameraIntrinsics::default(),
+                    normal_estimate: None,
+                    latent_shape: (4, 2, 2),
                 },
                 target_position: Point2::new(32.0, 32.0),
                 target_depth: 5.0,
