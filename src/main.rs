@@ -19,7 +19,7 @@ use mosaicmem::pipeline::inference::extract_frame_planar;
 #[derive(Parser)]
 #[command(
     name = "mosaicmem",
-    about = "MosaicMem: Hybrid Spatial Memory for Video World Models",
+    about = "MosaicMem: Hybrid Spatial Memory for Video World Models. Backend mode and ablation toggles are configured through JSON configs from `show-config`.",
     version
 )]
 struct Cli {
@@ -113,7 +113,7 @@ enum Commands {
         coverage: bool,
     },
 
-    /// Dump or load pipeline configuration as JSON.
+    /// Dump or load pipeline configuration as JSON, including backend mode and ablation toggles.
     ShowConfig {
         /// Optional JSON config file to load. If omitted, prints default config.
         #[arg(short, long)]

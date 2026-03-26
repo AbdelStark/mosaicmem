@@ -8,28 +8,22 @@
 ## Build and Test (Synthetic Mode)
 
 ```bash
-# Clone and build
-git clone https://github.com/AbdelStark/mosaicmem.git
-cd mosaicmem
-git checkout 001-paper-gap-closure
-
 # Run all tests including new paper-fidelity tests
 cargo test
 
+# Inspect the effective backend mode and ablation config
+cargo run -- show-config
+
 # Run with synthetic backend (default)
-cargo run -- demo --num-frames 16 --width 64 --height 64 --steps 5
+cargo run -- demo --num-frames 8 --width 32 --height 32 --steps 2
 # Output will show: [synthetic] backend active
 ```
 
 ## Verify Frame-Aware Retrieval
 
 ```bash
-# Run the demo with a turning trajectory to see per-frame retrieval
-cargo run -- demo --num-frames 32 --width 64 --height 64 \
-  --trajectory-type orbit --steps 5
-
-# Inspect memory coverage per frame
-cargo run -- inspect --num-frames 16 --trajectory-type orbit
+# The demo writes demo_output/trajectory.json; inspect it for per-frame memory coverage
+cargo run -- inspect --trajectory demo_output/trajectory.json --width 32 --height 32 --coverage
 ```
 
 ## Build with Real Backend (Requires Checkpoints)
@@ -38,37 +32,32 @@ cargo run -- inspect --num-frames 16 --trajectory-type orbit
 # Compile with real backend support
 cargo build --features real-backend
 
-# Configure backend in pipeline config
+# Inspect the config shape before editing backend_mode/checkpoint_path
 cargo run --features real-backend -- show-config
-# Edit config to set backend_mode: "real"
-# Set checkpoint paths for depth, VAE, backbone
-
-# Run with real backend
-cargo run --features real-backend -- generate \
-  --config my-config.json --trajectory trajectory.json
-# Output will show: [real] backend active
+# Then edit a JSON config to set backend_mode: "real" and checkpoint_path accordingly.
 ```
 
 ## Run Operator Reference Tests
 
 ```bash
 # PRoPE numerical reference tests
-cargo test prope_reference -- --nocapture
+cargo test --test prope_reference -- --nocapture
 
 # Warped RoPE dense reprojection tests
-cargo test warped_rope_dense -- --nocapture
+cargo test --test warped_rope_dense -- --nocapture
 
 # Warped Latent dense warp tests
-cargo test warped_latent_dense -- --nocapture
+cargo test --test warped_latent_dense -- --nocapture
 
 # Frame-aware retrieval tests
-cargo test frame_aware_retrieval -- --nocapture
+cargo test --test frame_retrieval -- --nocapture
 ```
 
 ## Ablation Configuration
 
 ```rust
-use mosaicmem::pipeline::config::{PipelineConfig, AblationConfig};
+use mosaicmem::AblationConfig;
+use mosaicmem::pipeline::config::PipelineConfig;
 
 let config = PipelineConfig {
     ablation: AblationConfig {
@@ -95,6 +84,6 @@ cargo clippy -- -D warnings
 cargo test
 
 # Must pass: no unsafe outside of feature-gated FFI
-grep -rn "unsafe" src/ --include="*.rs" | grep -v "// SAFETY:"
+rg -n "unsafe" src/
 # Should return nothing (or only justified FFI blocks behind real-backend)
 ```

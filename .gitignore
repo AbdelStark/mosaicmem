@@ -26,6 +26,7 @@ Thumbs.db
 # Rust build artifacts
 debug/
 release/
+*.rs.bk
 *.rlib
 *.prof*
 *.log

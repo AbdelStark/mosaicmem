@@ -1,4 +1,4 @@
-use crate::backend::{BackendError, validate_backend_configuration};
+use crate::backend::{BackendBridge, BackendError, create_backend_bridge};
 use crate::camera::{CameraIntrinsics, CameraTrajectory};
 use crate::diffusion::backbone::DiffusionBackbone;
 use crate::diffusion::scheduler::NoiseScheduler;
@@ -24,6 +24,7 @@ pub type FrameCallback = Box<dyn FnMut(usize, &[f32], &[usize; 5]) + Send>;
 pub struct AutoregressivePipeline {
     pub pipeline: InferencePipeline,
     pub config: PipelineConfig,
+    pub backend_bridge: Box<dyn BackendBridge>,
 }
 
 /// Linear blend of two frame buffers in the overlap region.
@@ -79,9 +80,15 @@ impl AutoregressivePipeline {
     }
 
     pub fn try_new(config: PipelineConfig) -> Result<Self, BackendError> {
-        validate_backend_configuration(config.backend_mode, config.checkpoint_path.as_deref())?;
+        let backend_bridge =
+            create_backend_bridge(config.backend_mode, config.checkpoint_path.as_deref())?;
+        backend_bridge.health_check()?;
         let pipeline = InferencePipeline::new(config.clone());
-        Ok(Self { pipeline, config })
+        Ok(Self {
+            pipeline,
+            config,
+            backend_bridge,
+        })
     }
 
     /// Generate a full video from a camera trajectory.
@@ -203,6 +210,11 @@ impl AutoregressivePipeline {
     /// Reset the memory store (start fresh).
     pub fn reset_memory(&mut self) {
         self.pipeline = InferencePipeline::new(self.config.clone());
+        self.backend_bridge = create_backend_bridge(
+            self.config.backend_mode,
+            self.config.checkpoint_path.as_deref(),
+        )
+        .expect("invalid backend configuration while resetting memory");
     }
 }
 
