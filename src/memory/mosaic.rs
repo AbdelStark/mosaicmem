@@ -19,18 +19,59 @@ pub struct MosaicFrame {
 #[derive(Debug, Clone)]
 pub struct LatentCanvas {
     pub data: Vec<f32>,
+    pub frames: usize,
     pub height: usize,
     pub width: usize,
     pub channels: usize,
 }
 
 impl LatentCanvas {
+    pub fn empty(frames: usize, height: usize, width: usize, channels: usize) -> Self {
+        Self {
+            data: vec![
+                0.0;
+                frames
+                    .saturating_mul(height)
+                    .saturating_mul(width)
+                    .saturating_mul(channels)
+            ],
+            frames,
+            height,
+            width,
+            channels,
+        }
+    }
+
+    pub fn stack(canvases: &[LatentCanvas]) -> Self {
+        let Some(first) = canvases.first() else {
+            return Self::empty(0, 0, 0, 0);
+        };
+
+        let mut data = Vec::new();
+        let mut frames = 0;
+        for canvas in canvases {
+            assert_eq!(canvas.height, first.height);
+            assert_eq!(canvas.width, first.width);
+            assert_eq!(canvas.channels, first.channels);
+            data.extend_from_slice(&canvas.data);
+            frames += canvas.frames;
+        }
+
+        Self {
+            data,
+            frames,
+            height: first.height,
+            width: first.width,
+            channels: first.channels,
+        }
+    }
+
     pub fn is_empty(&self) -> bool {
-        self.data.is_empty()
+        self.data.is_empty() || self.frames == 0
     }
 
     pub fn to_tokens(&self) -> Vec<Vec<f32>> {
-        let token_count = self.height * self.width;
+        let token_count = self.frames * self.height * self.width;
         let mut tokens = Vec::with_capacity(token_count);
         for idx in 0..token_count {
             let start = idx * self.channels;
@@ -40,25 +81,22 @@ impl LatentCanvas {
         tokens
     }
 
-    /// Convert the rasterized HWC canvas into flattened [C, T, H, W].
-    ///
-    /// The same spatial memory is replicated across `temporal_frames` latent
-    /// timesteps, which is sufficient for the synthetic inference path.
-    pub fn to_cthw(&self, temporal_frames: usize) -> Vec<f32> {
-        if temporal_frames == 0 || self.channels == 0 || self.height == 0 || self.width == 0 {
+    /// Convert the rasterized THWC canvas into flattened [C, T, H, W].
+    pub fn to_cthw(&self) -> Vec<f32> {
+        if self.frames == 0 || self.channels == 0 || self.height == 0 || self.width == 0 {
             return vec![];
         }
 
         let frame_size = self.height * self.width;
-        let mut latent = vec![0.0f32; self.channels * temporal_frames * frame_size];
+        let mut latent = vec![0.0f32; self.channels * self.frames * frame_size];
 
         for c in 0..self.channels {
-            for t in 0..temporal_frames {
+            for t in 0..self.frames {
                 for y in 0..self.height {
                     for x in 0..self.width {
-                        let src_idx = (y * self.width + x) * self.channels + c;
-                        let dst_idx =
-                            ((c * temporal_frames + t) * self.height + y) * self.width + x;
+                        let src_idx =
+                            (((t * self.height + y) * self.width + x) * self.channels) + c;
+                        let dst_idx = ((c * self.frames + t) * self.height + y) * self.width + x;
                         latent[dst_idx] = self.data[src_idx];
                     }
                 }
@@ -101,20 +139,21 @@ impl MosaicFrame {
         let mut positions = Vec::new();
 
         for patch in &self.patches {
-            let channels = if patch.patch.latent_height * patch.patch.latent_width > 0 {
-                patch.patch.latent.len() / (patch.patch.latent_height * patch.patch.latent_width)
-            } else {
+            let channels = patch.patch.channels();
+            let patch_tokens = patch.patch.token_count();
+            if patch_tokens == 0 || channels == 0 {
                 continue;
-            };
+            }
 
-            for i in 0..(patch.patch.latent_height * patch.patch.latent_width) {
+            for i in 0..patch_tokens {
                 let start = i * channels;
                 let end = start + channels;
                 if end <= patch.patch.latent.len() {
                     tokens.push(patch.patch.latent[start..end].to_vec());
+                    let footprint = patch.projected_footprint.get(i).copied();
                     positions.push([
-                        patch.target_position.x,
-                        patch.target_position.y,
+                        footprint.map(|p| p.x).unwrap_or(patch.target_position.x),
+                        footprint.map(|p| p.y).unwrap_or(patch.target_position.y),
                         patch.target_depth,
                     ]);
                 }
@@ -147,6 +186,7 @@ impl MosaicFrame {
         {
             return LatentCanvas {
                 data: accum,
+                frames: 1,
                 height: latent_height,
                 width: latent_width,
                 channels,
@@ -154,14 +194,16 @@ impl MosaicFrame {
         }
 
         for patch in &self.patches {
-            let patch_tokens = patch.patch.latent_height * patch.patch.latent_width;
+            let patch_tokens = patch.patch.token_count();
             if patch_tokens == 0 || patch.patch.latent.len() < patch_tokens * channels {
                 continue;
             }
 
             let patch_weight = patch.visibility_score.max(0.0).max(1e-6);
-            let center_x = patch.target_position.x / self.width as f32 * latent_width as f32;
-            let center_y = patch.target_position.y / self.height as f32 * latent_height as f32;
+            let fallback_center_x =
+                patch.target_position.x / self.width as f32 * latent_width as f32;
+            let fallback_center_y =
+                patch.target_position.y / self.height as f32 * latent_height as f32;
             let half_w = patch.patch.latent_width as f32 / 2.0;
             let half_h = patch.patch.latent_height as f32 / 2.0;
 
@@ -171,8 +213,19 @@ impl MosaicFrame {
                     let token_start = token_idx * channels;
                     let token = &patch.patch.latent[token_start..token_start + channels];
 
-                    let local_x = center_x + px as f32 + 0.5 - half_w;
-                    let local_y = center_y + py as f32 + 0.5 - half_h;
+                    let (local_x, local_y) = patch
+                        .projected_footprint
+                        .get(token_idx)
+                        .map(|point| {
+                            (
+                                point.x / self.width as f32 * latent_width as f32,
+                                point.y / self.height as f32 * latent_height as f32,
+                            )
+                        })
+                        .unwrap_or((
+                            fallback_center_x + px as f32 + 0.5 - half_w,
+                            fallback_center_y + py as f32 + 0.5 - half_h,
+                        ));
 
                     let x0 = local_x.floor();
                     let y0 = local_y.floor();
@@ -224,6 +277,7 @@ impl MosaicFrame {
 
         LatentCanvas {
             data: accum,
+            frames: 1,
             height: latent_height,
             width: latent_width,
             channels,
@@ -258,6 +312,7 @@ mod tests {
                     latent_shape: (4, 2, 2),
                 },
                 target_position: Point2::new(50.0, 50.0),
+                projected_footprint: vec![Point2::new(50.0, 50.0); 4],
                 target_depth: 5.0,
                 visibility_score: 0.9,
             })
@@ -312,6 +367,7 @@ mod tests {
         assert_eq!(canvas.height, 8);
         assert_eq!(canvas.width, 8);
         assert_eq!(canvas.channels, 4);
+        assert_eq!(canvas.frames, 1);
         assert!(canvas.data.iter().any(|&v| v > 0.0));
     }
 
@@ -326,17 +382,18 @@ mod tests {
     }
 
     #[test]
-    fn test_latent_canvas_to_cthw_replicates_across_time() {
+    fn test_latent_canvas_stack_preserves_temporal_slices() {
         let mosaic = make_mosaic(1);
         let canvas = mosaic.compose_latent_canvas(4, 4, 4);
-        let latent = canvas.to_cthw(2);
+        let stacked = LatentCanvas::stack(&[canvas.clone(), canvas.clone()]);
+        let latent = stacked.to_cthw();
         let frame_size = 4 * 4;
 
         assert_eq!(latent.len(), 4 * 2 * frame_size);
         for c in 0..4 {
             let t0 = c * 2 * frame_size;
             let t1 = t0 + frame_size;
-            assert_eq!(&latent[t0..t0 + frame_size], &latent[t1..t1 + frame_size],);
+            assert_eq!(&latent[t0..t0 + frame_size], &latent[t1..t1 + frame_size]);
         }
     }
 

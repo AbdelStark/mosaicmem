@@ -85,19 +85,19 @@
 
 ### Tests for User Story 3
 
-- [ ] T017 [P] [US3] Write coarse/fine retrieval test in tests/frame_retrieval.rs — insert patches visible from different angles, retrieve for 3 distinct poses in a window, assert different top-K sets per pose
-- [ ] T018 [P] [US3] Write coverage mask variation test in tests/frame_retrieval.rs — verify coverage masks differ across frames when camera pans within a window
-- [ ] T019 [P] [US3] Write edge case tests in tests/frame_retrieval.rs — empty memory store returns empty results, single-frame window works, budget exhaustion mid-retrieval, duplicate consecutive poses
+- [X] T017 [P] [US3] Write coarse/fine retrieval test in tests/frame_retrieval.rs — insert patches visible from different angles, retrieve for 3 distinct poses in a window, assert different top-K sets per pose
+- [X] T018 [P] [US3] Write coverage mask variation test in tests/frame_retrieval.rs — verify coverage masks differ across frames when camera pans within a window
+- [X] T019 [P] [US3] Write edge case tests in tests/frame_retrieval.rs — empty memory store returns empty results, single-frame window works, budget exhaustion mid-retrieval, duplicate consecutive poses
 
 ### Implementation for User Story 3
 
-- [ ] T020 [US3] Implement bounding frustum computation from a set of window poses in src/memory/retrieval.rs — union of per-pose frustums for coarse candidate selection
-- [ ] T021 [US3] Add FrameRetrievalResult struct and MemoryRetriever trait in src/memory/retrieval.rs per contracts/trait-contracts.md
-- [ ] T022 [US3] Implement coarse/fine two-tier retrieval: coarse pass queries KD-tree once per window, fine pass scores candidates per-frame with temporal decay and diversity in src/memory/retrieval.rs
-- [ ] T023 [US3] Refactor LatentCanvas in src/memory/mosaic.rs — remove temporal replication in to_cthw(), replace with per-frame rasterization using projected patch footprints
-- [ ] T024 [US3] Implement per-frame coverage mask computation in src/memory/mosaic.rs — coverage reflects actual projected footprint, not just center-point hits
-- [ ] T025 [US3] Refactor generate_window in src/pipeline/inference.rs — replace single-pose retrieval (poses[0]) with per-latent-slice retrieval loop, wire AblationConfig into the inference path
-- [ ] T026 [US3] Update autoregressive pipeline in src/pipeline/autoregressive.rs to pass AblationConfig and CameraIntrinsics through to generate_window
+- [X] T020 [US3] Implement bounding frustum computation from a set of window poses in src/memory/retrieval.rs — union of per-pose frustums for coarse candidate selection
+- [X] T021 [US3] Add FrameRetrievalResult struct and MemoryRetriever trait in src/memory/retrieval.rs per contracts/trait-contracts.md
+- [X] T022 [US3] Implement coarse/fine two-tier retrieval: coarse pass queries KD-tree once per window, fine pass scores candidates per-frame with temporal decay and diversity in src/memory/retrieval.rs
+- [X] T023 [US3] Refactor LatentCanvas in src/memory/mosaic.rs — remove temporal replication in to_cthw(), replace with per-frame rasterization using projected patch footprints
+- [X] T024 [US3] Implement per-frame coverage mask computation in src/memory/mosaic.rs — coverage reflects actual projected footprint, not just center-point hits
+- [X] T025 [US3] Refactor generate_window in src/pipeline/inference.rs — replace single-pose retrieval (poses[0]) with per-latent-slice retrieval loop, wire AblationConfig into the inference path
+- [X] T026 [US3] Update autoregressive pipeline in src/pipeline/autoregressive.rs to pass AblationConfig and CameraIntrinsics through to generate_window
 
 **Checkpoint**: T017-T019 tests pass. Within a single window, different latent timesteps get distinct retrieval results and coverage masks. Existing E2E tests still pass.
 
@@ -111,17 +111,17 @@
 
 ### Tests for User Story 4
 
-- [ ] T027 [P] [US4] Write PRoPE projection matrix construction test in tests/prope_reference.rs — verify P = K * [R|t] against hand-computed 3x4 matrix for a known camera
-- [ ] T028 [P] [US4] Write PRoPE relative transform test in tests/prope_reference.rs — verify M_{ij} = P_i * P_j^{+} for two known cameras, compare against reference
-- [ ] T029 [P] [US4] Write PRoPE identity test in tests/prope_reference.rs — verify identical source/target cameras produce identity transform (within tolerance)
-- [ ] T030 [P] [US4] Write PRoPE attention sensitivity test in tests/prope_reference.rs — verify changing camera geometry changes attention Q/K output
+- [X] T027 [P] [US4] Write PRoPE projection matrix construction test in tests/prope_reference.rs — verify P = K * [R|t] against hand-computed 3x4 matrix for a known camera
+- [X] T028 [P] [US4] Write PRoPE relative transform test in tests/prope_reference.rs — verify M_{ij} = P_i * P_j^{+} for two known cameras, compare against reference
+- [X] T029 [P] [US4] Write PRoPE identity test in tests/prope_reference.rs — verify identical source/target cameras produce identity transform (within tolerance)
+- [X] T030 [P] [US4] Write PRoPE attention sensitivity test in tests/prope_reference.rs — verify changing camera geometry changes attention Q/K output
 
 ### Implementation for User Story 4
 
-- [ ] T031 [US4] Implement ProjectiveTransform struct with from_cameras() constructor in src/attention/prope.rs — compute P_i = K_i * [R_i|t_i] (3x4), then M_{ij} = P_i * P_j^{+} using pseudo-inverse
-- [ ] T032 [US4] Implement ProjectiveTransform::to_rope_params() decomposition in src/attention/prope.rs — extract rotation parameters for multiplicative Q/K transform
-- [ ] T033 [US4] Implement PRoPEOperator trait: compute_projective_transform() and apply_to_attention() in src/attention/prope.rs — apply multiplicatively (rotary) to Q/K, not additively
-- [ ] T034 [US4] Add temporal compression subframe handling in src/attention/prope.rs — when a latent slice maps to multiple original frames, compute per-subframe cameras and aggregate
+- [X] T031 [US4] Implement ProjectiveTransform struct with from_cameras() constructor in src/attention/prope.rs — compute P_i = K_i * [R_i|t_i] (3x4), then M_{ij} = P_i * P_j^{+} using pseudo-inverse
+- [X] T032 [US4] Implement ProjectiveTransform::to_rope_params() decomposition in src/attention/prope.rs — extract rotation parameters for multiplicative Q/K transform
+- [X] T033 [US4] Implement PRoPEOperator trait: compute_projective_transform() and apply_to_attention() in src/attention/prope.rs — apply multiplicatively (rotary) to Q/K, not additively
+- [X] T034 [US4] Add temporal compression subframe handling in src/attention/prope.rs — when a latent slice maps to multiple original frames, compute per-subframe cameras and aggregate
 
 **Checkpoint**: T027-T030 tests pass. PRoPE produces correct relative transforms. Attention output changes when cameras change.
 
@@ -135,16 +135,16 @@
 
 ### Tests for User Story 5
 
-- [ ] T035 [P] [US5] Write dense reprojection golden test in tests/warped_rope_dense.rs — reproject a 4x4 token grid from known source to known target, compare against hand-computed (u,v,t) triples
-- [ ] T036 [P] [US5] Write intra-patch distinctness test in tests/warped_rope_dense.rs — verify all tokens in a patch get distinct warped positions (no center-only replication)
-- [ ] T037 [P] [US5] Write fractional coordinate stability test in tests/warped_rope_dense.rs — apply subpixel camera shift, verify positions change smoothly (max delta proportional to shift)
+- [X] T035 [P] [US5] Write dense reprojection golden test in tests/warped_rope_dense.rs — reproject a 4x4 token grid from known source to known target, compare against hand-computed (u,v,t) triples
+- [X] T036 [P] [US5] Write intra-patch distinctness test in tests/warped_rope_dense.rs — verify all tokens in a patch get distinct warped positions (no center-only replication)
+- [X] T037 [P] [US5] Write fractional coordinate stability test in tests/warped_rope_dense.rs — apply subpixel camera shift, verify positions change smoothly (max delta proportional to shift)
 
 ### Implementation for User Story 5
 
-- [ ] T038 [US5] Implement dense coordinate reprojection in src/attention/warped_rope.rs — for each token in patch, unproject token_coord with depth_tile to 3D, transform to world, project to target view, preserve fractional coordinates
-- [ ] T039 [US5] Replace center-only quantized position computation with per-token dense positions in src/attention/warped_rope.rs — remove integer bin quantization, use fractional (u, v) directly
-- [ ] T040 [US5] Implement richer temporal coordinate handling in src/attention/warped_rope.rs — replace coarse age-to-bin scaling with continuous temporal offset normalized by half-life
-- [ ] T041 [US5] Update WarpedRoPE integration in src/attention/memory_cross.rs — pass token_coords and depth_tile from PatchMetadata, use CameraIntrinsics for reprojection
+- [X] T038 [US5] Implement dense coordinate reprojection in src/attention/warped_rope.rs — for each token in patch, unproject token_coord with depth_tile to 3D, transform to world, project to target view, preserve fractional coordinates
+- [X] T039 [US5] Replace center-only quantized position computation with per-token dense positions in src/attention/warped_rope.rs — remove integer bin quantization, use fractional (u, v) directly
+- [X] T040 [US5] Implement richer temporal coordinate handling in src/attention/warped_rope.rs — replace coarse age-to-bin scaling with continuous temporal offset normalized by half-life
+- [X] T041 [US5] Update WarpedRoPE integration in src/attention/memory_cross.rs — pass token_coords and depth_tile from PatchMetadata, use CameraIntrinsics for reprojection
 
 **Checkpoint**: T035-T037 tests pass. Each token in a patch receives a distinct warped position. Oblique views produce wider position spread.
 

@@ -183,7 +183,7 @@ impl MemoryCrossAttention {
         patches: &[RetrievedPatch],
         target_pose: &CameraPose,
         intrinsics: &CameraIntrinsics,
-    ) -> Vec<[usize; 3]> {
+    ) -> Vec<[f32; 3]> {
         self.warped_rope
             .compute_warped_positions(patches, target_pose, intrinsics)
     }
@@ -192,7 +192,7 @@ impl MemoryCrossAttention {
     ///
     /// For each head, applies the u/v/t rotations from WarpedRoPE to the
     /// first 3*dim_per_axis dimensions of each key vector.
-    fn apply_warped_rope_to_keys(&self, head_keys: &mut [Vec<Vec<f32>>], positions: &[[usize; 3]]) {
+    fn apply_warped_rope_to_keys(&self, head_keys: &mut [Vec<Vec<f32>>], positions: &[[f32; 3]]) {
         let dim_per_axis = self.warped_rope.rope_u.dim;
         let rope_dim = 3 * dim_per_axis;
 
@@ -296,11 +296,7 @@ impl MemoryCrossAttention {
         // Apply WarpedRoPE to memory keys — geometric positional encoding
         let warped_positions =
             self.compute_memory_positions(&mosaic.patches, target_pose, intrinsics);
-        // We may have more tokens than patches (multiple tokens per patch),
-        // so expand positions to match the token count.
-        let expanded_positions =
-            self.expand_positions_to_tokens(&mosaic.patches, &warped_positions);
-        self.apply_warped_rope_to_keys(&mut k_heads, &expanded_positions);
+        self.apply_warped_rope_to_keys(&mut k_heads, &warped_positions);
 
         // Compute multi-head attention
         let mut outputs = vec![vec![0.0f32; self.hidden_dim]; num_gen];
@@ -327,40 +323,6 @@ impl MemoryCrossAttention {
         }
 
         outputs
-    }
-
-    /// Expand per-patch positions to per-token positions.
-    ///
-    /// Each patch may produce multiple tokens (latent_height * latent_width).
-    /// This replicates the patch's warped position for each of its tokens.
-    fn expand_positions_to_tokens(
-        &self,
-        patches: &[RetrievedPatch],
-        positions: &[[usize; 3]],
-    ) -> Vec<[usize; 3]> {
-        let mut expanded = Vec::new();
-        for (patch, &pos) in patches.iter().zip(positions.iter()) {
-            let num_tokens = if patch.patch.latent_height * patch.patch.latent_width > 0 {
-                patch.patch.latent_height * patch.patch.latent_width
-            } else {
-                0
-            };
-            // Verify the latent data supports this many tokens
-            let channels = if num_tokens > 0 {
-                patch.patch.latent.len() / num_tokens
-            } else {
-                continue;
-            };
-            let valid_tokens = if channels > 0 {
-                patch.patch.latent.len() / channels
-            } else {
-                0
-            };
-            for _ in 0..valid_tokens {
-                expanded.push(pos);
-            }
-        }
-        expanded
     }
 }
 
@@ -434,6 +396,7 @@ mod tests {
         let retrieved = RetrievedPatch {
             patch,
             target_position: Point2::new(50.0, 50.0),
+            projected_footprint: vec![Point2::new(50.0, 50.0); 4],
             target_depth: 5.0,
             visibility_score: 0.9,
         };
@@ -499,6 +462,7 @@ mod tests {
         let retrieved = RetrievedPatch {
             patch,
             target_position: Point2::new(50.0, 50.0),
+            projected_footprint: vec![Point2::new(50.0, 50.0); 4],
             target_depth: 5.0,
             visibility_score: 0.9,
         };
@@ -564,6 +528,7 @@ mod tests {
                     latent_shape: (8, 2, 2),
                 },
                 target_position: Point2::new(30.0 + i as f32 * 20.0, 50.0),
+                projected_footprint: vec![Point2::new(30.0 + i as f32 * 20.0, 50.0); 4],
                 target_depth: 5.0 + i as f32,
                 visibility_score: 0.8,
             })
@@ -573,9 +538,10 @@ mod tests {
         let intrinsics = CameraIntrinsics::new(100.0, 100.0, 50.0, 50.0, 100, 100);
 
         let positions = mca.compute_memory_positions(&patches, &pose, &intrinsics);
-        assert_eq!(positions.len(), 3);
+        assert_eq!(positions.len(), 12);
 
-        // Patches at different spatial positions should get different warped positions
-        assert_ne!(positions[0], positions[1]);
+        // Token groups from different patches should have different warped positions.
+        assert_ne!(positions[0], positions[4]);
+        assert_ne!(positions[4], positions[8]);
     }
 }

@@ -3,6 +3,7 @@ use crate::geometry::depth::{DepthError, DepthEstimator};
 use crate::geometry::pointcloud::PointCloud3D;
 use crate::geometry::projection::unproject_depth_map;
 use kiddo::SquaredEuclidean;
+use std::collections::HashMap;
 use thiserror::Error;
 
 type SpatialKdTree = kiddo::float::kdtree::KdTree<f32, u64, 3, 256, u32>;
@@ -88,24 +89,50 @@ impl StreamingFusion {
             return;
         }
 
-        match self.try_build_kdtree() {
-            Some(tree) => self.kdtree = Some(tree),
-            None => {
-                // Too many points with same position — downsample more aggressively
-                tracing::debug!(
-                    "KD-tree rebuild: deduplicating {} points with coarser voxel",
-                    self.global_cloud.len()
-                );
-                self.global_cloud = self.global_cloud.voxel_downsample(self.voxel_size * 2.0);
-                self.kdtree = self.try_build_kdtree();
+        let mut voxel_scale = 1.0f32;
+        while self.max_axis_duplicate_count() >= 256 {
+            let next_cloud = self
+                .global_cloud
+                .voxel_downsample(self.voxel_size * voxel_scale * 2.0);
+            if next_cloud.len() == self.global_cloud.len() {
+                self.kdtree = None;
+                return;
             }
+
+            self.global_cloud = next_cloud;
+            voxel_scale *= 2.0;
+            tracing::debug!(
+                "KD-tree rebuild: deduplicating {} points with voxel scale {:.2}",
+                self.global_cloud.len(),
+                voxel_scale,
+            );
         }
+
+        self.kdtree = Some(self.build_kdtree());
     }
 
-    /// Attempt to build a KD-tree, returning None if kiddo panics due to
-    /// too many coincident points.
-    fn try_build_kdtree(&self) -> Option<SpatialKdTree> {
-        use std::panic;
+    fn max_axis_duplicate_count(&self) -> usize {
+        let mut x_counts: HashMap<u32, usize> = HashMap::new();
+        let mut y_counts: HashMap<u32, usize> = HashMap::new();
+        let mut z_counts: HashMap<u32, usize> = HashMap::new();
+
+        for point in &self.global_cloud.points {
+            *x_counts.entry(point.position.x.to_bits()).or_default() += 1;
+            *y_counts.entry(point.position.y.to_bits()).or_default() += 1;
+            *z_counts.entry(point.position.z.to_bits()).or_default() += 1;
+        }
+
+        x_counts
+            .values()
+            .chain(y_counts.values())
+            .chain(z_counts.values())
+            .copied()
+            .max()
+            .unwrap_or(0)
+    }
+
+    /// Build a KD-tree once the point set satisfies kiddo's duplicate-axis constraint.
+    fn build_kdtree(&self) -> SpatialKdTree {
         let points: Vec<([f32; 3], u64)> = self
             .global_cloud
             .points
@@ -114,14 +141,11 @@ impl StreamingFusion {
             .map(|(i, p)| ([p.position.x, p.position.y, p.position.z], i as u64))
             .collect();
 
-        panic::catch_unwind(|| {
-            let mut tree = SpatialKdTree::new();
-            for (pos, id) in &points {
-                tree.add(pos, *id);
-            }
-            tree
-        })
-        .ok()
+        let mut tree = SpatialKdTree::new();
+        for (pos, id) in &points {
+            tree.add(pos, *id);
+        }
+        tree
     }
 
     /// Query nearest neighbors within a radius.

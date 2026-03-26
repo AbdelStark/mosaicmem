@@ -174,7 +174,7 @@ impl SyntheticBackbone {
         let mask_sig = Self::summarize_mask(condition);
         let timestep = condition.timestep.clamp(0.0, 1.0);
         let condition_strength = self.noise_scale * (0.08 + 0.17 * timestep);
-        let global_bias = 0.03 * text_sig + 0.05 * memory_sig + 0.04 * camera_sig + 0.02 * mask_sig;
+        let global_bias = 0.03 * text_sig + 0.07 * memory_sig + 0.03 * camera_sig + 0.03 * mask_sig;
         let spatial_memory = condition
             .memory_latent
             .as_ref()
@@ -208,7 +208,7 @@ impl SyntheticBackbone {
                             let memory_anchor =
                                 spatial_memory.map(|memory| memory[idx]).unwrap_or(local);
                             let anchor = if spatial_memory.is_some() {
-                                0.25 * noisy_latent[idx] + 0.15 * local + 0.60 * memory_anchor
+                                0.15 * noisy_latent[idx] + 0.10 * local + 0.75 * memory_anchor
                             } else {
                                 0.65 * noisy_latent[idx] + 0.35 * local
                             };
