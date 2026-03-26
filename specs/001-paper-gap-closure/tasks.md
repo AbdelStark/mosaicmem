@@ -158,17 +158,17 @@
 
 ### Tests for User Story 6
 
-- [ ] T042 [P] [US6] Write dense warp geometric golden test in tests/warped_latent_dense.rs — warp a 4x4 patch between two known cameras with known depth, compare target coords against hand-computed values
-- [ ] T043 [P] [US6] Write identity warp test in tests/warped_latent_dense.rs — same source/target pose produces approximately identity warp (warped latent matches source latent within tolerance)
-- [ ] T044 [P] [US6] Write invalid sample masking test in tests/warped_latent_dense.rs — place a patch partially behind target camera, verify behind-camera samples are masked (valid_mask = false), not zero-filled
+- [X] T042 [P] [US6] Write dense warp geometric golden test in tests/warped_latent_dense.rs — warp a 4x4 patch between two known cameras with known depth, compare target coords against hand-computed values
+- [X] T043 [P] [US6] Write identity warp test in tests/warped_latent_dense.rs — same source/target pose produces approximately identity warp (warped latent matches source latent within tolerance)
+- [X] T044 [P] [US6] Write invalid sample masking test in tests/warped_latent_dense.rs — place a patch partially behind target camera, verify behind-camera samples are masked (valid_mask = false), not zero-filled
 
 ### Implementation for User Story 6
 
-- [ ] T045 [US6] Implement WarpGrid struct in src/attention/warped_latent.rs — target_coords, valid_mask, source_shape per data-model.md, with valid_ratio() method
-- [ ] T046 [US6] Implement dense warp grid construction in src/attention/warped_latent.rs — for each token (u_s, v_s) with depth d_s: unproject to 3D via K_s^{-1}, transform to world, project to target via K_t, mark invalid if z_t <= 0
-- [ ] T047 [US6] Implement bilinear resampling in src/attention/warped_latent.rs — WarpGrid::sample_bilinear() applies the computed sampling grid to source latent tile, zero-fills invalid samples
-- [ ] T048 [US6] Implement WarpOperator trait (compute_warp_grid + apply_warp) in src/attention/warped_latent.rs per contracts/trait-contracts.md
-- [ ] T049 [US6] Update Warped Latent integration in src/pipeline/inference.rs — replace single-plane homography call with WarpOperator::compute_warp_grid() + apply_warp() using dense patch geometry
+- [X] T045 [US6] Implement WarpGrid struct in src/attention/warped_latent.rs — target_coords, valid_mask, source_shape per data-model.md, with valid_ratio() method
+- [X] T046 [US6] Implement dense warp grid construction in src/attention/warped_latent.rs — for each token (u_s, v_s) with depth d_s: unproject to 3D via K_s^{-1}, transform to world, project to target via K_t, mark invalid if z_t <= 0
+- [X] T047 [US6] Implement bilinear resampling in src/attention/warped_latent.rs — WarpGrid::sample_bilinear() applies the computed sampling grid to source latent tile, zero-fills invalid samples
+- [X] T048 [US6] Implement WarpOperator trait (compute_warp_grid + apply_warp) in src/attention/warped_latent.rs per contracts/trait-contracts.md
+- [X] T049 [US6] Update Warped Latent integration in src/pipeline/inference.rs — replace single-plane homography call with WarpOperator::compute_warp_grid() + apply_warp() using dense patch geometry
 
 **Checkpoint**: T042-T044 tests pass. Dense warp uses per-token depth. Invalid regions are masked. Identity warp preserves latent.
 
@@ -182,16 +182,16 @@
 
 ### Tests for User Story 7
 
-- [ ] T050 [P] [US7] Write backend bridge request/response schema tests in tests/backend_bridge.rs — verify serialization/deserialization of tensor payloads with shape metadata round-trips correctly
-- [ ] T051 [P] [US7] Write BackendMode config serde test in tests/backend_bridge.rs — verify PipelineConfig with backend_mode: Real serializes/deserializes; verify checkpoint-not-found error when real mode selected without checkpoint path
+- [X] T050 [P] [US7] Write backend bridge request/response schema tests in tests/backend_bridge.rs — verify serialization/deserialization of tensor payloads with shape metadata round-trips correctly
+- [X] T051 [P] [US7] Write BackendMode config serde test in tests/backend_bridge.rs — verify PipelineConfig with backend_mode: Real serializes/deserializes; verify checkpoint-not-found error when real mode selected without checkpoint path
 
 ### Implementation for User Story 7
 
-- [ ] T052 [US7] Define BackendBridge trait in src/backend.rs — methods for health_check(), infer_depth(), infer_vae_encode(), infer_vae_decode(), infer_denoise(), all returning Result with BackendError
-- [ ] T053 [US7] Implement request/response types in src/backend.rs — TensorPayload (flat data + shape + dtype), BackendRequest, BackendResponse with serde support
-- [ ] T054 [US7] Implement SyntheticBridge (always available) that delegates to existing Synthetic* structs in src/backend.rs
-- [ ] T055 [US7] Implement PythonSidecarBridge (behind #[cfg(feature = "real-backend")]) in src/backend.rs — spawn Python process, communicate via JSON-over-stdio, handle timeouts
-- [ ] T056 [US7] Add `real-backend` feature to Cargo.toml with conditional dependencies; wire BackendBridge into pipeline startup in src/pipeline/autoregressive.rs
+- [X] T052 [US7] Define BackendBridge trait in src/backend.rs — methods for health_check(), infer_depth(), infer_vae_encode(), infer_vae_decode(), infer_denoise(), all returning Result with BackendError
+- [X] T053 [US7] Implement request/response types in src/backend.rs — TensorPayload (flat data + shape + dtype), BackendRequest, BackendResponse with serde support
+- [X] T054 [US7] Implement SyntheticBridge (always available) that delegates to existing Synthetic* structs in src/backend.rs
+- [X] T055 [US7] Implement PythonSidecarBridge (behind #[cfg(feature = "real-backend")]) in src/backend.rs — spawn Python process, communicate via JSON-over-stdio, handle timeouts
+- [X] T056 [US7] Add `real-backend` feature to Cargo.toml with conditional dependencies; wire BackendBridge into pipeline startup in src/pipeline/autoregressive.rs
 
 **Checkpoint**: T050-T051 pass. Synthetic bridge works transparently. Real bridge compiles behind feature flag. Missing checkpoint returns typed error.
 
@@ -205,18 +205,18 @@
 
 ### Tests for User Story 8
 
-- [ ] T057 [P] [US8] Write memory cross-attention wiring test in tests/integration.rs — verify that with enable_memory=true, cross-attention is exercised (output differs from enable_memory=false)
-- [ ] T058 [P] [US8] Write ablation toggle test in tests/integration.rs — verify each combination (prope_only, warped_rope_only, warped_latent_only, full) produces distinct outputs
-- [ ] T059 [P] [US8] Write memory gate test in tests/integration.rs — verify memory_gate_override=Some(0.0) produces same output as enable_memory=false
+- [X] T057 [P] [US8] Write memory cross-attention wiring test in tests/integration.rs — verify that with enable_memory=true, cross-attention is exercised (output differs from enable_memory=false)
+- [X] T058 [P] [US8] Write ablation toggle test in tests/integration.rs — verify each combination (prope_only, warped_rope_only, warped_latent_only, full) produces distinct outputs
+- [X] T059 [P] [US8] Write memory gate test in tests/integration.rs — verify memory_gate_override=Some(0.0) produces same output as enable_memory=false
 
 ### Implementation for User Story 8
 
-- [ ] T060 [US8] Define MemoryContext struct in src/attention/memory_cross.rs — carries retrieved patches, WarpGrids, PRoPE transforms, warped RoPE positions, rasterized canvas, coverage masks, and AblationConfig
-- [ ] T061 [US8] Wire PRoPE into attention Q/K processing in src/attention/memory_cross.rs — call PRoPEOperator::apply_to_attention() on queries and memory keys before dot-product, gated by AblationConfig::enable_prope
-- [ ] T062 [US8] Wire Warped RoPE into memory key encoding in src/attention/memory_cross.rs — apply per-token warped positions to memory keys, gated by AblationConfig::enable_warped_rope
-- [ ] T063 [US8] Wire Warped Latent into memory value preparation in src/attention/memory_cross.rs — apply WarpOperator results to memory values before cross-attention, gated by AblationConfig::enable_warped_latent
-- [ ] T064 [US8] Update DiffusionBackbone trait signature in src/diffusion/backbone.rs — add memory_context: Option<&MemoryContext> parameter, update SyntheticBackbone to accept and use it
-- [ ] T065 [US8] Wire MemoryContext assembly into generate_window in src/pipeline/inference.rs — collect all per-frame retrieval results, WarpGrids, PRoPE transforms, and pass as MemoryContext to backbone.denoise()
+- [X] T060 [US8] Define MemoryContext struct in src/attention/memory_cross.rs — carries retrieved patches, WarpGrids, PRoPE transforms, warped RoPE positions, rasterized canvas, coverage masks, and AblationConfig
+- [X] T061 [US8] Wire PRoPE into attention Q/K processing in src/attention/memory_cross.rs — call PRoPEOperator::apply_to_attention() on queries and memory keys before dot-product, gated by AblationConfig::enable_prope
+- [X] T062 [US8] Wire Warped RoPE into memory key encoding in src/attention/memory_cross.rs — apply per-token warped positions to memory keys, gated by AblationConfig::enable_warped_rope
+- [X] T063 [US8] Wire Warped Latent into memory value preparation in src/attention/memory_cross.rs — apply WarpOperator results to memory values before cross-attention, gated by AblationConfig::enable_warped_latent
+- [X] T064 [US8] Update DiffusionBackbone trait signature in src/diffusion/backbone.rs — add memory_context: Option<&MemoryContext> parameter, update SyntheticBackbone to accept and use it
+- [X] T065 [US8] Wire MemoryContext assembly into generate_window in src/pipeline/inference.rs — collect all per-frame retrieval results, WarpGrids, PRoPE transforms, and pass as MemoryContext to backbone.denoise()
 
 **Checkpoint**: T057-T059 pass. Memory conditioning measurably affects output. Each ablation toggle produces distinct results. Gate override works.
 
@@ -226,12 +226,12 @@
 
 **Purpose**: Regression validation, documentation, and cleanup across all stories.
 
-- [ ] T066 [P] Verify all existing tests pass — run cargo test and confirm tests/meaningful_end_to_end.rs and tests/integration.rs green with no regressions
-- [ ] T067 [P] Run cargo clippy -- -D warnings and fix any new warnings across all modified files
-- [ ] T068 [P] Verify no unsafe blocks outside of feature-gated FFI — grep for unsafe in src/ and confirm each has a // SAFETY: comment or is behind #[cfg(feature = "real-backend")]
-- [ ] T069 [P] Add module-level //! doc comments to new files: src/tensor.rs, src/backend.rs, src/camera/intrinsics.rs — explain purpose and relationship to paper
-- [ ] T070 Update CLI --help text in src/main.rs to mention backend mode selection and ablation config
-- [ ] T071 Run quickstart.md validation — execute all commands from specs/001-paper-gap-closure/quickstart.md and verify they succeed
+- [X] T066 [P] Verify all existing tests pass — run cargo test and confirm tests/meaningful_end_to_end.rs and tests/integration.rs green with no regressions
+- [X] T067 [P] Run cargo clippy -- -D warnings and fix any new warnings across all modified files
+- [X] T068 [P] Verify no unsafe blocks outside of feature-gated FFI — grep for unsafe in src/ and confirm each has a // SAFETY: comment or is behind #[cfg(feature = "real-backend")]
+- [X] T069 [P] Add module-level //! doc comments to new files: src/tensor.rs, src/backend.rs, src/camera/intrinsics.rs — explain purpose and relationship to paper
+- [X] T070 Update CLI --help text in src/main.rs to mention backend mode selection and ablation config
+- [X] T071 Run quickstart.md validation — execute all commands from specs/001-paper-gap-closure/quickstart.md and verify they succeed
 
 ---
 

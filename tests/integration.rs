@@ -4,6 +4,7 @@
 //! verifying that all components work together correctly.
 
 use mosaicmem::attention::{MemoryCrossAttention, PRoPE, WarpedRoPE};
+use mosaicmem::backend::AblationConfig;
 use mosaicmem::camera::{CameraIntrinsics, CameraPose, CameraTrajectory};
 use mosaicmem::diffusion::backbone::SyntheticBackbone;
 use mosaicmem::diffusion::scheduler::DDPMScheduler;
@@ -44,6 +45,82 @@ fn linear_trajectory(num_frames: usize, step: f32) -> CameraTrajectory {
             })
             .collect(),
     )
+}
+
+fn seeded_memory_snapshot(config: &PipelineConfig) -> mosaicmem::memory::store::MemorySnapshot {
+    let intrinsics = CameraIntrinsics::default_for_resolution(config.width, config.height);
+    let depth_estimator = SyntheticDepthEstimator::new(5.0, 1.0);
+    let vae = SyntheticVAE::new(8, 4, 16);
+    let mut store = MosaicMemoryStore::new(MemoryConfig {
+        max_patches: config.max_memory_patches,
+        top_k: config.retrieval_top_k,
+        patch_size: config.spatial_downsample as u32,
+        latent_patch_size: 2,
+        temporal_decay_half_life: config.temporal_decay_half_life,
+        ..Default::default()
+    });
+
+    let frame_data = vec![128u8; config.width as usize * config.height as usize * 3];
+    let depth_map = depth_estimator
+        .estimate_depth(&frame_data, config.width, config.height)
+        .unwrap();
+    let frame_f32: Vec<f32> = frame_data.iter().map(|&byte| byte as f32 / 255.0).collect();
+    let frame_shape = [1, 3, 1, config.height as usize, config.width as usize];
+    let (latents, lat_shape) = vae.encode(&frame_f32, &frame_shape).unwrap();
+
+    for (idx, pose) in [
+        CameraPose::identity(0.0),
+        CameraPose::from_translation_rotation(
+            1.0,
+            Vector3::new(1.0, 0.0, 0.25),
+            UnitQuaternion::identity(),
+        ),
+    ]
+    .iter()
+    .enumerate()
+    {
+        store.insert_keyframe(
+            idx,
+            pose.timestamp,
+            &latents,
+            lat_shape[3],
+            lat_shape[4],
+            lat_shape[1],
+            &depth_map,
+            &intrinsics,
+            pose,
+        );
+    }
+
+    store.snapshot()
+}
+
+fn run_generation_with_snapshot(
+    config: PipelineConfig,
+    snapshot: &mosaicmem::memory::store::MemorySnapshot,
+) -> Vec<f32> {
+    let mut pipeline = AutoregressivePipeline::new(config.clone());
+    pipeline.pipeline.memory_store = MosaicMemoryStore::from_snapshot(snapshot.clone());
+
+    let trajectory = linear_trajectory(config.window_size.max(4), 0.35);
+    let backbone = SyntheticBackbone::new(0.15);
+    let scheduler = DDPMScheduler::linear(1000, 1e-4, 0.02);
+    let vae = SyntheticVAE::new(8, 4, 16);
+    let depth = SyntheticDepthEstimator::new(5.0, 1.0);
+    let text_emb = vec![vec![0.15f32; 64]; 10];
+
+    pipeline
+        .generate(
+            &trajectory,
+            &text_emb,
+            &backbone,
+            &scheduler,
+            &vae,
+            &depth,
+            None,
+        )
+        .unwrap()
+        .0
 }
 
 // ============================================================================
@@ -495,6 +572,132 @@ fn test_memory_config_json_roundtrip() {
 
     assert_eq!(deserialized.max_patches, 5000);
     assert_eq!(deserialized.top_k, 32);
+}
+
+#[test]
+fn test_memory_cross_attention_wiring_changes_output() {
+    let memory_on = PipelineConfig {
+        num_inference_steps: 2,
+        width: 32,
+        height: 32,
+        window_size: 4,
+        window_overlap: 1,
+        ablation: AblationConfig::default(),
+        ..Default::default()
+    };
+    let memory_off = PipelineConfig {
+        ablation: AblationConfig {
+            enable_memory: false,
+            ..AblationConfig::default()
+        },
+        ..memory_on.clone()
+    };
+    let snapshot = seeded_memory_snapshot(&memory_on);
+
+    let with_memory = run_generation_with_snapshot(memory_on, &snapshot);
+    let without_memory = run_generation_with_snapshot(memory_off, &snapshot);
+
+    assert_ne!(with_memory, without_memory);
+}
+
+#[test]
+fn test_ablation_combinations_produce_distinct_outputs() {
+    let base = PipelineConfig {
+        num_inference_steps: 2,
+        width: 32,
+        height: 32,
+        window_size: 4,
+        window_overlap: 1,
+        ..Default::default()
+    };
+    let snapshot = seeded_memory_snapshot(&base);
+
+    let prope_only = run_generation_with_snapshot(
+        PipelineConfig {
+            ablation: AblationConfig {
+                enable_prope: true,
+                enable_warped_rope: false,
+                enable_warped_latent: false,
+                ..AblationConfig::default()
+            },
+            ..base.clone()
+        },
+        &snapshot,
+    );
+    let warped_rope_only = run_generation_with_snapshot(
+        PipelineConfig {
+            ablation: AblationConfig {
+                enable_prope: false,
+                enable_warped_rope: true,
+                enable_warped_latent: false,
+                ..AblationConfig::default()
+            },
+            ..base.clone()
+        },
+        &snapshot,
+    );
+    let warped_latent_only = run_generation_with_snapshot(
+        PipelineConfig {
+            ablation: AblationConfig {
+                enable_prope: false,
+                enable_warped_rope: false,
+                enable_warped_latent: true,
+                ..AblationConfig::default()
+            },
+            ..base.clone()
+        },
+        &snapshot,
+    );
+    let full = run_generation_with_snapshot(
+        PipelineConfig {
+            ablation: AblationConfig::default(),
+            ..base
+        },
+        &snapshot,
+    );
+
+    assert_ne!(prope_only, warped_rope_only);
+    assert_ne!(prope_only, warped_latent_only);
+    assert_ne!(prope_only, full);
+    assert_ne!(warped_rope_only, warped_latent_only);
+    assert_ne!(warped_rope_only, full);
+    assert_ne!(warped_latent_only, full);
+}
+
+#[test]
+fn test_memory_gate_override_zero_matches_memory_disabled() {
+    let base = PipelineConfig {
+        num_inference_steps: 2,
+        width: 32,
+        height: 32,
+        window_size: 4,
+        window_overlap: 1,
+        ..Default::default()
+    };
+    let snapshot = seeded_memory_snapshot(&base);
+
+    let gated_zero = run_generation_with_snapshot(
+        PipelineConfig {
+            ablation: AblationConfig {
+                memory_gate_override: Some(0.0),
+                ..AblationConfig::default()
+            },
+            ..base.clone()
+        },
+        &snapshot,
+    );
+    let memory_disabled = run_generation_with_snapshot(
+        PipelineConfig {
+            ablation: AblationConfig {
+                enable_memory: false,
+                ..AblationConfig::default()
+            },
+            ..base
+        },
+        &snapshot,
+    );
+
+    assert_eq!(gated_zero, memory_disabled);
 }
 
 // ============================================================================

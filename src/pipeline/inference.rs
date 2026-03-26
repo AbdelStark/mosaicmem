@@ -1,6 +1,6 @@
-use crate::attention::memory_cross::MemoryCrossAttention;
-use crate::attention::prope::PRoPE;
-use crate::attention::warped_latent::warp_patch_latent;
+use crate::attention::memory_cross::{MemoryContext, MemoryCrossAttention, MemoryFrameContext};
+use crate::attention::prope::{PRoPE, PRoPEOperator};
+use crate::attention::warped_latent::{DenseWarpOperator, WarpGrid, WarpOperator};
 use crate::camera::{CameraIntrinsics, CameraPose, CameraTrajectory};
 use crate::diffusion::backbone::{DiffusionBackbone, DiffusionCondition};
 use crate::diffusion::scheduler::NoiseScheduler;
@@ -192,72 +192,53 @@ impl InferencePipeline {
         let slice_poses = self.slice_poses_for_latent_frames(poses, lat_t);
 
         // Retrieve memory per latent slice when memory conditioning is enabled.
-        let mut mosaics: Vec<crate::memory::mosaic::MosaicFrame> =
-            if self.config.ablation.enable_memory {
-                self.retriever
-                    .retrieve_window(&self.memory_store, &slice_poses, intrinsics)
-                    .map_err(|e| PipelineError::Config(e.to_string()))?
-                    .into_iter()
-                    .map(|frame| frame.into_mosaic())
-                    .collect()
-            } else {
-                slice_poses
-                    .iter()
-                    .map(|pose| crate::memory::mosaic::MosaicFrame {
-                        target_pose: pose.clone(),
-                        patches: Vec::new(),
-                        coverage_mask: Vec::new(),
-                        width: intrinsics.width,
-                        height: intrinsics.height,
-                    })
-                    .collect()
-            };
-
-        // Apply warped latent feature-space alignment to retrieved patches
-        if self.config.warped_latent_enabled() {
-            for mosaic in &mut mosaics {
-                if !mosaic.patches.is_empty() {
-                    let target_pose = mosaic.target_pose.clone();
-                    self.apply_warped_latent(&mut *mosaic, &target_pose, intrinsics);
-                }
-            }
-        }
-
-        let combined_mosaic = self.combine_mosaics(&mosaics, intrinsics.width, intrinsics.height);
-        let memory_canvas = if combined_mosaic.patches.is_empty() {
-            None
+        let mosaics: Vec<crate::memory::mosaic::MosaicFrame> = if self.config.ablation.enable_memory
+        {
+            self.retriever
+                .retrieve_window(&self.memory_store, &slice_poses, intrinsics)
+                .map_err(|e| PipelineError::Config(e.to_string()))?
+                .into_iter()
+                .map(|frame| frame.into_mosaic())
+                .collect()
         } else {
-            let canvases: Vec<_> = mosaics
+            slice_poses
                 .iter()
-                .map(|mosaic| mosaic.compose_latent_canvas(lat_h, lat_w, lat_c))
-                .collect();
-            Some(crate::memory::mosaic::LatentCanvas::stack(&canvases))
+                .map(|pose| crate::memory::mosaic::MosaicFrame {
+                    target_pose: pose.clone(),
+                    patches: Vec::new(),
+                    coverage_mask: Vec::new(),
+                    width: intrinsics.width,
+                    height: intrinsics.height,
+                })
+                .collect()
         };
 
-        // Compose patch tokens plus a rasterized latent canvas for conditioning.
-        let memory_tokens = self.compose_memory_tokens(&mosaics, memory_canvas.as_ref());
-        let has_memory = !memory_tokens.is_empty();
-        let memory_latent = memory_canvas.as_ref().map(|canvas| canvas.to_cthw());
-
-        // Compute PRoPE camera rotations for this window's poses
-        let camera_rotations = if !poses.is_empty() {
-            Some(self.prope.compute_rotations(poses, intrinsics))
+        let memory_context = if self.config.ablation.enable_memory {
+            let context =
+                self.build_memory_context(&mosaics, &slice_poses, intrinsics, lat_h, lat_w, lat_c);
+            context.has_memory().then_some(context)
         } else {
             None
         };
-
-        // Flatten coverage mask for backbone conditioning
-        let coverage_mask = if has_memory {
-            Some(self.flatten_temporal_coverage_masks(&mosaics))
-        } else {
-            None
-        };
+        let has_memory = memory_context
+            .as_ref()
+            .is_some_and(MemoryContext::has_memory);
 
         debug!(
-            "Window generation: {} patches, coverage={:.1}%, PRoPE frames={}, warped_latent={}",
-            combined_mosaic.patches.len(),
+            "Window generation: {} frames with memory, coverage={:.1}%, warp_valid={:.1}%, warped_latent={}",
+            memory_context
+                .as_ref()
+                .map(|context| context
+                    .frames
+                    .iter()
+                    .map(|frame| frame.mosaic.patches.len())
+                    .sum::<usize>())
+                .unwrap_or(0),
             self.average_coverage_ratio(&mosaics) * 100.0,
-            slice_poses.len(),
+            memory_context
+                .as_ref()
+                .map(|context| context.warp_valid_ratio() * 100.0)
+                .unwrap_or(0.0),
             self.config.warped_latent_enabled(),
         );
 
@@ -268,19 +249,11 @@ impl InferencePipeline {
 
             let condition = DiffusionCondition {
                 text_embedding: text_embedding.to_vec(),
-                memory_tokens: if has_memory {
-                    Some(memory_tokens.clone())
-                } else {
-                    None
-                },
-                memory_latent: memory_latent.clone(),
-                memory_mask: coverage_mask.clone(),
-                camera_rotations: camera_rotations.clone(),
                 timestep: timestep_f,
             };
 
             let predicted_noise = backbone
-                .denoise_step(&latent, &shape, &condition)
+                .denoise_step(&latent, &shape, &condition, memory_context.as_ref())
                 .map_err(|e| PipelineError::Backbone(e.to_string()))?;
 
             // Apply memory cross-attention to modulate the denoised latent.
@@ -292,6 +265,7 @@ impl InferencePipeline {
                 // Reshape denoised latent [C*T*H*W] into tokens [T*H*W, C]
                 let num_spatial = lat_t * lat_h * lat_w;
                 let mut tokens: Vec<Vec<f32>> = Vec::with_capacity(num_spatial);
+                let mut query_frame_indices = Vec::with_capacity(num_spatial);
                 for i in 0..num_spatial {
                     let mut token = Vec::with_capacity(lat_c);
                     for c in 0..lat_c {
@@ -303,12 +277,16 @@ impl InferencePipeline {
                     // Pad to hidden_dim if needed
                     token.resize(self.config.hidden_dim, 0.0);
                     tokens.push(token);
+                    query_frame_indices.push(i / (lat_h * lat_w).max(1));
                 }
 
-                // Run memory cross-attention
-                let attn_output =
-                    self.cross_attention
-                        .forward(&tokens, &combined_mosaic, &poses[0], intrinsics);
+                let attn_output = self.cross_attention.forward_with_context(
+                    &tokens,
+                    memory_context
+                        .as_ref()
+                        .expect("memory context should exist when has_memory is true"),
+                    &query_frame_indices,
+                );
 
                 // Add residual: latent = denoised + cross_attention_output
                 // Only add back the latent channels (first lat_c dims of each token)
@@ -335,48 +313,6 @@ impl InferencePipeline {
         Ok((frames, frame_shape))
     }
 
-    /// Apply warped latent feature-space alignment to retrieved patches.
-    ///
-    /// For each patch, computes a homography from its source camera view to the
-    /// target view, then warps the latent features using bilinear interpolation.
-    /// This aligns memory patches geometrically before attention.
-    fn apply_warped_latent(
-        &self,
-        mosaic: &mut crate::memory::mosaic::MosaicFrame,
-        target_pose: &CameraPose,
-        intrinsics: &CameraIntrinsics,
-    ) {
-        for patch in &mut mosaic.patches {
-            let source_pose = patch.patch.source_pose.clone();
-            let channels = if patch.patch.latent_height * patch.patch.latent_width > 0 {
-                patch.patch.latent.len() / (patch.patch.latent_height * patch.patch.latent_width)
-            } else {
-                continue;
-            };
-
-            if channels == 0 || patch.patch.latent_height < 2 || patch.patch.latent_width < 2 {
-                continue;
-            }
-
-            let warped = warp_patch_latent(
-                &patch.patch.latent,
-                patch.patch.latent_height,
-                patch.patch.latent_width,
-                channels,
-                &source_pose,
-                target_pose,
-                intrinsics,
-                patch.patch.source_depth,
-            );
-
-            // Only use warped latent if it has non-zero content (valid warp)
-            let has_content = warped.iter().any(|&v| v.abs() > 1e-10);
-            if has_content {
-                patch.patch.latent = warped;
-            }
-        }
-    }
-
     fn slice_poses_for_latent_frames(
         &self,
         poses: &[CameraPose],
@@ -399,45 +335,6 @@ impl InferencePipeline {
                 poses[mid.min(poses.len() - 1)].clone()
             })
             .collect()
-    }
-
-    fn combine_mosaics(
-        &self,
-        mosaics: &[crate::memory::mosaic::MosaicFrame],
-        width: u32,
-        height: u32,
-    ) -> crate::memory::mosaic::MosaicFrame {
-        let fallback_pose = mosaics
-            .first()
-            .map(|mosaic| mosaic.target_pose.clone())
-            .unwrap_or_else(|| CameraPose::identity(0.0));
-        let mut combined = crate::memory::mosaic::MosaicFrame {
-            target_pose: fallback_pose,
-            patches: mosaics
-                .iter()
-                .flat_map(|mosaic| mosaic.patches.clone())
-                .collect(),
-            coverage_mask: vec![
-                vec![false; (width / 8).max(1) as usize];
-                (height / 8).max(1) as usize
-            ],
-            width,
-            height,
-        };
-
-        for mosaic in mosaics {
-            for (row_idx, row) in mosaic.coverage_mask.iter().enumerate() {
-                for (col_idx, &covered) in row.iter().enumerate() {
-                    if row_idx < combined.coverage_mask.len()
-                        && col_idx < combined.coverage_mask[row_idx].len()
-                    {
-                        combined.coverage_mask[row_idx][col_idx] |= covered;
-                    }
-                }
-            }
-        }
-
-        combined
     }
 
     /// Flatten the per-frame coverage masks into a single 1D boolean vector.
@@ -466,6 +363,150 @@ impl InferencePipeline {
             .map(crate::memory::mosaic::MosaicFrame::coverage_ratio)
             .sum::<f32>()
             / mosaics.len() as f32
+    }
+
+    fn build_memory_context(
+        &self,
+        mosaics: &[crate::memory::mosaic::MosaicFrame],
+        slice_poses: &[CameraPose],
+        intrinsics: &CameraIntrinsics,
+        latent_height: usize,
+        latent_width: usize,
+        latent_channels: usize,
+    ) -> MemoryContext {
+        let mut frames = Vec::with_capacity(mosaics.len());
+        let mut canvases = Vec::with_capacity(mosaics.len());
+        let anchor_pose = slice_poses.first();
+
+        for mosaic in mosaics {
+            let (base_tokens, raw_positions) = mosaic.compose_tokens();
+            let base_positions: Vec<[f32; 3]> = raw_positions
+                .iter()
+                .map(|position| {
+                    [
+                        position[0] / intrinsics.width as f32
+                            * self.cross_attention.warped_rope.spatial_resolution as f32,
+                        position[1] / intrinsics.height as f32
+                            * self.cross_attention.warped_rope.spatial_resolution as f32,
+                        0.0,
+                    ]
+                })
+                .collect();
+            let warped_positions = self.cross_attention.warped_rope.compute_warped_positions(
+                &mosaic.patches,
+                &mosaic.target_pose,
+                intrinsics,
+            );
+            let (aligned_mosaic, warp_grids) =
+                self.align_mosaic_with_warped_latent(mosaic, &mosaic.target_pose, intrinsics);
+            let warped_value_tokens = aligned_mosaic.compose_tokens().0;
+            let prope_transform = anchor_pose.and_then(|anchor| {
+                self.prope
+                    .compute_projective_transform(
+                        anchor,
+                        &mosaic.target_pose,
+                        intrinsics,
+                        intrinsics,
+                    )
+                    .ok()
+            });
+            let canvas_source = if self.config.ablation.enable_warped_latent {
+                &aligned_mosaic
+            } else {
+                mosaic
+            };
+            canvases.push(canvas_source.compose_latent_canvas(
+                latent_height,
+                latent_width,
+                latent_channels,
+            ));
+
+            frames.push(MemoryFrameContext {
+                mosaic: mosaic.clone(),
+                warp_grids,
+                prope_transform,
+                base_tokens,
+                warped_value_tokens,
+                base_positions,
+                warped_positions,
+            });
+        }
+
+        let rasterized_canvas = if canvases.is_empty() {
+            None
+        } else {
+            Some(crate::memory::mosaic::LatentCanvas::stack(&canvases))
+        };
+
+        MemoryContext {
+            frames,
+            rasterized_canvas,
+            coverage_mask: self.flatten_temporal_coverage_masks(mosaics),
+            ablation: self.config.ablation.clone(),
+        }
+    }
+
+    fn align_mosaic_with_warped_latent(
+        &self,
+        mosaic: &crate::memory::mosaic::MosaicFrame,
+        target_pose: &CameraPose,
+        intrinsics: &CameraIntrinsics,
+    ) -> (crate::memory::mosaic::MosaicFrame, Vec<WarpGrid>) {
+        let mut aligned = mosaic.clone();
+        let operator = DenseWarpOperator;
+        let mut warp_grids = Vec::new();
+
+        for patch in &mut aligned.patches {
+            let channels = patch.patch.channels();
+            if channels == 0 || patch.patch.latent_height == 0 || patch.patch.latent_width == 0 {
+                continue;
+            }
+
+            let Ok(grid) = operator.compute_warp_grid(&patch.patch, target_pose, intrinsics) else {
+                continue;
+            };
+            let Some((warped_values, valid_ratio)) = self.warp_patch_values(&patch.patch, &grid)
+            else {
+                warp_grids.push(grid);
+                continue;
+            };
+
+            if valid_ratio > 0.0 {
+                patch.patch.latent = warped_values;
+            }
+            warp_grids.push(grid);
+        }
+
+        (aligned, warp_grids)
+    }
+
+    fn warp_patch_values(
+        &self,
+        patch: &crate::memory::store::Patch3D,
+        grid: &WarpGrid,
+    ) -> Option<(Vec<f32>, f32)> {
+        let channels = patch.channels();
+        let source = crate::tensor::TensorView::from_shape_vec(
+            &[patch.latent_height, patch.latent_width, channels],
+            patch.latent.clone(),
+            crate::tensor::TensorLayout::Flat(vec![
+                patch.latent_height,
+                patch.latent_width,
+                channels,
+            ]),
+        )
+        .ok()?;
+        let operator = DenseWarpOperator;
+        let (warped, valid_mask) = operator.apply_warp(&source, grid).ok()?;
+        let valid_ratio = valid_mask
+            .data()
+            .as_slice_memory_order()
+            .map(|mask| {
+                mask.iter().filter(|&&value| value > 0.5).count() as f32 / mask.len().max(1) as f32
+            })
+            .unwrap_or(0.0);
+        let values = warped.data().as_slice_memory_order()?.to_vec();
+        Some((values, valid_ratio))
     }
 
     /// Update memory with newly generated frames.
@@ -631,6 +672,7 @@ impl InferencePipeline {
     }
 
     /// Combine patch tokens with a rasterized latent canvas for backbone conditioning.
+    #[cfg(test)]
     fn compose_memory_tokens(
         &self,
         mosaics: &[crate::memory::mosaic::MosaicFrame],
