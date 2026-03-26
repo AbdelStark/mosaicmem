@@ -440,9 +440,9 @@ impl MosaicMemoryStore {
                 let pixel = intrinsics.project(&cam_point)?;
 
                 // Visibility score: closer and more centered patches score higher
-                let center_dist =
-                    ((pixel.x - intrinsics.cx as f32) / intrinsics.width as f32).powi(2)
-                        + ((pixel.y - intrinsics.cy as f32) / intrinsics.height as f32).powi(2);
+                let center_dist = ((pixel.x - intrinsics.cx as f32) / intrinsics.width as f32)
+                    .powi(2)
+                    + ((pixel.y - intrinsics.cy as f32) / intrinsics.height as f32).powi(2);
                 let depth_score = 1.0 / (1.0 + cam_point.z * 0.1);
                 let mut visibility_score = (1.0 - center_dist.sqrt()).max(0.0) * depth_score;
 
@@ -540,7 +540,11 @@ impl MosaicMemoryStore {
     }
 }
 
-fn build_token_coords(source_rect: [f32; 4], latent_width: usize, latent_height: usize) -> Vec<(f32, f32)> {
+fn build_token_coords(
+    source_rect: [f32; 4],
+    latent_width: usize,
+    latent_height: usize,
+) -> Vec<(f32, f32)> {
     if latent_width == 0 || latent_height == 0 {
         return Vec::new();
     }

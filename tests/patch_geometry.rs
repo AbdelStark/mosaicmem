@@ -25,7 +25,10 @@ fn make_patch() -> Patch3D {
 #[test]
 fn test_patch_metadata_invariants() {
     let patch = make_patch();
-    assert_eq!(patch.token_coords.len(), patch.latent_shape.1 * patch.latent_shape.2);
+    assert_eq!(
+        patch.token_coords.len(),
+        patch.latent_shape.1 * patch.latent_shape.2
+    );
     assert!(patch.validate_geometry().is_ok());
 
     let mut wrong_coords = make_patch();

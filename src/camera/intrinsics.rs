@@ -74,7 +74,8 @@ impl CameraIntrinsics {
 
     /// Project a 3D point (in camera coords) to 2D pixel coordinates.
     pub fn project(&self, point: &Point3<f32>) -> Option<Point2<f32>> {
-        self.project_f64(&point.cast::<f64>()).map(|pixel| pixel.cast::<f32>())
+        self.project_f64(&point.cast::<f64>())
+            .map(|pixel| pixel.cast::<f32>())
     }
 
     pub fn unproject_f64(&self, pixel: &Point2<f64>, depth: f64) -> Point3<f64> {

@@ -56,7 +56,10 @@ pub enum BackendError {
     #[error("real backend requested but the `real-backend` Cargo feature is disabled")]
     RealBackendFeatureDisabled,
     #[error("checkpoint not found for real backend{path_suffix}")]
-    CheckpointNotFound { path: Option<PathBuf>, path_suffix: String },
+    CheckpointNotFound {
+        path: Option<PathBuf>,
+        path_suffix: String,
+    },
 }
 
 impl BackendError {
@@ -107,6 +110,9 @@ mod tests {
     #[test]
     fn test_real_backend_requires_checkpoint() {
         let result = validate_backend_configuration(BackendMode::Real, None);
-        assert!(matches!(result, Err(BackendError::CheckpointNotFound { .. })));
+        assert!(matches!(
+            result,
+            Err(BackendError::CheckpointNotFound { .. })
+        ));
     }
 }

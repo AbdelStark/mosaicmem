@@ -10,19 +10,14 @@ fn test_tensor_view_construction_and_layout_validation() {
     .unwrap();
     assert_eq!(bcthw.spatial_shape(), (4, 5));
 
-    let chw = TensorView::from_shape_vec(
-        &[3, 8, 8],
-        vec![1.0; 3 * 8 * 8],
-        TensorLayout::CHW,
-    )
-    .unwrap();
+    let chw =
+        TensorView::from_shape_vec(&[3, 8, 8], vec![1.0; 3 * 8 * 8], TensorLayout::CHW).unwrap();
     assert_eq!(chw.spatial_shape(), (8, 8));
 
     let hw = TensorView::from_shape_vec(&[6, 7], vec![0.0; 42], TensorLayout::HW).unwrap();
     assert_eq!(hw.spatial_shape(), (6, 7));
 
-    let err = TensorView::from_shape_vec(&[1, 2, 3], vec![0.0; 6], TensorLayout::BCHW)
-        .unwrap_err();
+    let err = TensorView::from_shape_vec(&[1, 2, 3], vec![0.0; 6], TensorLayout::BCHW).unwrap_err();
     assert!(matches!(err, TensorError::RankMismatch { .. }));
 }
 

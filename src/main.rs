@@ -418,7 +418,10 @@ fn cmd_generate(args: &GenerateArgs) -> Result<(), Box<dyn std::error::Error>> {
     };
     let backend_label = config.backend_mode.label();
 
-    info!("{} Loading trajectory from {:?}", backend_label, trajectory_path);
+    info!(
+        "{} Loading trajectory from {:?}",
+        backend_label, trajectory_path
+    );
     let trajectory = CameraTrajectory::load_json(trajectory_path)?;
     info!("{} Loaded {} poses", backend_label, trajectory.len());
 
@@ -595,7 +598,11 @@ fn cmd_demo(
         backend_label,
         trajectory.len()
     );
-    info!("{} Path length: {:.2} units", backend_label, trajectory.path_length());
+    info!(
+        "{} Path length: {:.2} units",
+        backend_label,
+        trajectory.path_length()
+    );
 
     let mut pipeline = AutoregressivePipeline::try_new(config)?;
     let backbone = SyntheticBackbone::new(0.1);
@@ -700,7 +707,10 @@ fn cmd_inspect(
 ) -> Result<(), Box<dyn std::error::Error>> {
     use mosaicmem::memory::retrieval::MemoryRetriever;
 
-    info!("{} === MosaicMem Trajectory Inspector ===", BackendMode::Synthetic.label());
+    info!(
+        "{} === MosaicMem Trajectory Inspector ===",
+        BackendMode::Synthetic.label()
+    );
     let trajectory = CameraTrajectory::load_json(trajectory_path)?;
     info!("Trajectory: {} poses", trajectory.len());
     info!("Duration: {:.2}s", trajectory.duration());

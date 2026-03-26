@@ -6,6 +6,6 @@ pub mod store;
 pub use mosaic::MosaicFrame;
 pub use retrieval::MemoryRetriever;
 pub use store::{
-    KeyframeParams, MemorySnapshot, MosaicMemoryStore, Patch3D, PatchGeometryError,
-    PatchMetadata, RetrievedPatch,
+    KeyframeParams, MemorySnapshot, MosaicMemoryStore, Patch3D, PatchGeometryError, PatchMetadata,
+    RetrievedPatch,
 };
