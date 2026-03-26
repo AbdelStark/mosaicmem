@@ -138,6 +138,8 @@ pub struct RetrievedPatch {
     pub patch: Patch3D,
     /// Projected 2D position in target view.
     pub target_position: Point2<f32>,
+    /// Per-token projected footprint in the target view.
+    pub projected_footprint: Vec<Point2<f32>>,
     /// Depth in target camera frame.
     pub target_depth: f32,
     /// Visibility score (0..1).
@@ -458,6 +460,7 @@ impl MosaicMemoryStore {
                 Some(RetrievedPatch {
                     patch: patch.clone(),
                     target_position: pixel,
+                    projected_footprint: vec![pixel],
                     target_depth: cam_point.z,
                     visibility_score,
                 })

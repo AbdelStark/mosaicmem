@@ -65,6 +65,10 @@ impl TensorView {
         &self.data
     }
 
+    pub fn data_mut(&mut self) -> &mut ArrayD<f32> {
+        &mut self.data
+    }
+
     pub fn shape(&self) -> &[usize] {
         self.data.shape()
     }

@@ -153,6 +153,28 @@ impl InferencePipeline {
         scheduler: &dyn NoiseScheduler,
         vae: &dyn VAE,
     ) -> Result<(Vec<f32>, [usize; 5]), PipelineError> {
+        let intrinsics =
+            CameraIntrinsics::default_for_resolution(self.config.width, self.config.height);
+        self.generate_window_with_intrinsics(
+            poses,
+            &intrinsics,
+            text_embedding,
+            backbone,
+            scheduler,
+            vae,
+        )
+    }
+
+    /// Generate a single window using explicit camera intrinsics.
+    pub fn generate_window_with_intrinsics(
+        &mut self,
+        poses: &[CameraPose],
+        intrinsics: &CameraIntrinsics,
+        text_embedding: &[Vec<f32>],
+        backbone: &dyn DiffusionBackbone,
+        scheduler: &dyn NoiseScheduler,
+        vae: &dyn VAE,
+    ) -> Result<(Vec<f32>, [usize; 5]), PipelineError> {
         let lat_h = self.config.latent_height();
         let lat_w = self.config.latent_width();
         let lat_t = self.config.latent_frames();
@@ -167,59 +189,75 @@ impl InferencePipeline {
             return Err(PipelineError::Config("No poses provided".to_string()));
         }
 
-        let intrinsics =
-            CameraIntrinsics::default_for_resolution(self.config.width, self.config.height);
+        let slice_poses = self.slice_poses_for_latent_frames(poses, lat_t);
 
-        // Retrieve memory with temporal decay applied when memory conditioning is enabled.
-        let query_time = Some(poses[0].timestamp);
-        let mut mosaic = if self.config.ablation.enable_memory {
-            self.retriever
-                .retrieve_at_time(&self.memory_store, &poses[0], &intrinsics, query_time)
-        } else {
-            crate::memory::mosaic::MosaicFrame {
-                target_pose: poses[0].clone(),
-                patches: Vec::new(),
-                coverage_mask: Vec::new(),
-                width: intrinsics.width,
-                height: intrinsics.height,
-            }
-        };
+        // Retrieve memory per latent slice when memory conditioning is enabled.
+        let mut mosaics: Vec<crate::memory::mosaic::MosaicFrame> =
+            if self.config.ablation.enable_memory {
+                self.retriever
+                    .retrieve_window(&self.memory_store, &slice_poses, intrinsics)
+                    .map_err(|e| PipelineError::Config(e.to_string()))?
+                    .into_iter()
+                    .map(|frame| frame.into_mosaic())
+                    .collect()
+            } else {
+                slice_poses
+                    .iter()
+                    .map(|pose| crate::memory::mosaic::MosaicFrame {
+                        target_pose: pose.clone(),
+                        patches: Vec::new(),
+                        coverage_mask: Vec::new(),
+                        width: intrinsics.width,
+                        height: intrinsics.height,
+                    })
+                    .collect()
+            };
 
         // Apply warped latent feature-space alignment to retrieved patches
-        if self.config.warped_latent_enabled() && !mosaic.patches.is_empty() {
-            self.apply_warped_latent(&mut mosaic, &poses[0], &intrinsics);
+        if self.config.warped_latent_enabled() {
+            for mosaic in &mut mosaics {
+                if !mosaic.patches.is_empty() {
+                    let target_pose = mosaic.target_pose.clone();
+                    self.apply_warped_latent(&mut *mosaic, &target_pose, intrinsics);
+                }
+            }
         }
 
-        let memory_canvas = if mosaic.patches.is_empty() {
+        let combined_mosaic = self.combine_mosaics(&mosaics, intrinsics.width, intrinsics.height);
+        let memory_canvas = if combined_mosaic.patches.is_empty() {
             None
         } else {
-            Some(mosaic.compose_latent_canvas(lat_h, lat_w, lat_c))
+            let canvases: Vec<_> = mosaics
+                .iter()
+                .map(|mosaic| mosaic.compose_latent_canvas(lat_h, lat_w, lat_c))
+                .collect();
+            Some(crate::memory::mosaic::LatentCanvas::stack(&canvases))
         };
 
         // Compose patch tokens plus a rasterized latent canvas for conditioning.
-        let memory_tokens = self.compose_memory_tokens(&mosaic, memory_canvas.as_ref());
+        let memory_tokens = self.compose_memory_tokens(&mosaics, memory_canvas.as_ref());
         let has_memory = !memory_tokens.is_empty();
-        let memory_latent = memory_canvas.as_ref().map(|canvas| canvas.to_cthw(lat_t));
+        let memory_latent = memory_canvas.as_ref().map(|canvas| canvas.to_cthw());
 
         // Compute PRoPE camera rotations for this window's poses
         let camera_rotations = if !poses.is_empty() {
-            Some(self.prope.compute_rotations(poses, &intrinsics))
+            Some(self.prope.compute_rotations(poses, intrinsics))
         } else {
             None
         };
 
         // Flatten coverage mask for backbone conditioning
         let coverage_mask = if has_memory {
-            Some(self.flatten_coverage_mask(&mosaic.coverage_mask))
+            Some(self.flatten_temporal_coverage_masks(&mosaics))
         } else {
             None
         };
 
         debug!(
             "Window generation: {} patches, coverage={:.1}%, PRoPE frames={}, warped_latent={}",
-            mosaic.patches.len(),
-            mosaic.coverage_ratio() * 100.0,
-            poses.len(),
+            combined_mosaic.patches.len(),
+            self.average_coverage_ratio(&mosaics) * 100.0,
+            slice_poses.len(),
             self.config.warped_latent_enabled(),
         );
 
@@ -270,7 +308,7 @@ impl InferencePipeline {
                 // Run memory cross-attention
                 let attn_output =
                     self.cross_attention
-                        .forward(&tokens, &mosaic, &poses[0], &intrinsics);
+                        .forward(&tokens, &combined_mosaic, &poses[0], intrinsics);
 
                 // Add residual: latent = denoised + cross_attention_output
                 // Only add back the latent channels (first lat_c dims of each token)
@@ -339,12 +377,95 @@ impl InferencePipeline {
         }
     }
 
-    /// Flatten the 2D coverage mask into a 1D boolean vector for backbone conditioning.
-    fn flatten_coverage_mask(&self, coverage: &[Vec<bool>]) -> Vec<bool> {
-        coverage
-            .iter()
-            .flat_map(|row| row.iter().copied())
+    fn slice_poses_for_latent_frames(
+        &self,
+        poses: &[CameraPose],
+        latent_frames: usize,
+    ) -> Vec<CameraPose> {
+        if poses.is_empty() || latent_frames == 0 {
+            return Vec::new();
+        }
+
+        let compression = self.config.temporal_compression.max(1);
+        (0..latent_frames)
+            .map(|slice_idx| {
+                let start = slice_idx * compression;
+                let end = ((slice_idx + 1) * compression).min(poses.len());
+                let mid = if start >= poses.len() {
+                    poses.len() - 1
+                } else {
+                    start + (end.saturating_sub(start + 1)) / 2
+                };
+                poses[mid.min(poses.len() - 1)].clone()
+            })
             .collect()
+    }
+
+    fn combine_mosaics(
+        &self,
+        mosaics: &[crate::memory::mosaic::MosaicFrame],
+        width: u32,
+        height: u32,
+    ) -> crate::memory::mosaic::MosaicFrame {
+        let fallback_pose = mosaics
+            .first()
+            .map(|mosaic| mosaic.target_pose.clone())
+            .unwrap_or_else(|| CameraPose::identity(0.0));
+        let mut combined = crate::memory::mosaic::MosaicFrame {
+            target_pose: fallback_pose,
+            patches: mosaics
+                .iter()
+                .flat_map(|mosaic| mosaic.patches.clone())
+                .collect(),
+            coverage_mask: vec![
+                vec![false; (width / 8).max(1) as usize];
+                (height / 8).max(1) as usize
+            ],
+            width,
+            height,
+        };
+
+        for mosaic in mosaics {
+            for (row_idx, row) in mosaic.coverage_mask.iter().enumerate() {
+                for (col_idx, &covered) in row.iter().enumerate() {
+                    if row_idx < combined.coverage_mask.len()
+                        && col_idx < combined.coverage_mask[row_idx].len()
+                    {
+                        combined.coverage_mask[row_idx][col_idx] |= covered;
+                    }
+                }
+            }
+        }
+
+        combined
+    }
+
+    /// Flatten the per-frame coverage masks into a single 1D boolean vector.
+    fn flatten_temporal_coverage_masks(
+        &self,
+        mosaics: &[crate::memory::mosaic::MosaicFrame],
+    ) -> Vec<bool> {
+        mosaics
+            .iter()
+            .flat_map(|mosaic| {
+                mosaic
+                    .coverage_mask
+                    .iter()
+                    .flat_map(|row| row.iter().copied())
+                    .collect::<Vec<_>>()
+            })
+            .collect()
+    }
+
+    fn average_coverage_ratio(&self, mosaics: &[crate::memory::mosaic::MosaicFrame]) -> f32 {
+        if mosaics.is_empty() {
+            return 0.0;
+        }
+        mosaics
+            .iter()
+            .map(crate::memory::mosaic::MosaicFrame::coverage_ratio)
+            .sum::<f32>()
+            / mosaics.len() as f32
     }
 
     /// Update memory with newly generated frames.
@@ -512,10 +633,13 @@ impl InferencePipeline {
     /// Combine patch tokens with a rasterized latent canvas for backbone conditioning.
     fn compose_memory_tokens(
         &self,
-        mosaic: &crate::memory::mosaic::MosaicFrame,
+        mosaics: &[crate::memory::mosaic::MosaicFrame],
         memory_canvas: Option<&crate::memory::mosaic::LatentCanvas>,
     ) -> Vec<Vec<f32>> {
-        let (mut tokens, _) = mosaic.compose_tokens();
+        let mut tokens = Vec::new();
+        for mosaic in mosaics {
+            tokens.extend(mosaic.compose_tokens().0);
+        }
         if let Some(canvas) = memory_canvas {
             tokens.extend(canvas.to_tokens());
         }
@@ -740,7 +864,14 @@ mod tests {
         let config = PipelineConfig::default();
         let pipeline = InferencePipeline::new(config);
         let mask = vec![vec![true, false, true], vec![false, true, false]];
-        let flat = pipeline.flatten_coverage_mask(&mask);
+        let mosaics = vec![crate::memory::mosaic::MosaicFrame {
+            target_pose: CameraPose::identity(0.0),
+            patches: Vec::new(),
+            coverage_mask: mask,
+            width: 24,
+            height: 16,
+        }];
+        let flat = pipeline.flatten_temporal_coverage_masks(&mosaics);
         assert_eq!(flat, vec![true, false, true, false, true, false]);
     }
 
@@ -814,6 +945,7 @@ mod tests {
                     latent_shape: (4, 2, 2),
                 },
                 target_position: Point2::new(32.0, 32.0),
+                projected_footprint: vec![Point2::new(32.0, 32.0); 4],
                 target_depth: 5.0,
                 visibility_score: 1.0,
             }],
@@ -823,7 +955,7 @@ mod tests {
         };
 
         let canvas = mosaic.compose_latent_canvas(4, 4, 4);
-        let tokens = pipeline.compose_memory_tokens(&mosaic, Some(&canvas));
+        let tokens = pipeline.compose_memory_tokens(std::slice::from_ref(&mosaic), Some(&canvas));
         assert!(tokens.len() > mosaic.compose_tokens().0.len());
         assert_eq!(tokens[0].len(), 4);
     }

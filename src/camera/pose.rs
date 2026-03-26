@@ -1,4 +1,4 @@
-use nalgebra::{Isometry3, Point3, Rotation3, Translation3, UnitQuaternion, Vector3};
+use nalgebra::{Isometry3, Point3, Translation3, UnitQuaternion, Vector3};
 use serde::{Deserialize, Serialize};
 
 /// Camera pose represented as an SE(3) rigid body transformation.
@@ -46,12 +46,9 @@ impl CameraPose {
         target: &Point3<f32>,
         up: &Vector3<f32>,
     ) -> Self {
-        let rotation = Rotation3::look_at_rh(&(target - eye), up);
-        let rotation = UnitQuaternion::from_rotation_matrix(&rotation);
-        let translation = Translation3::from(eye.coords);
-        // world_to_camera = inverse of camera_to_world
-        let camera_to_world = Isometry3::from_parts(translation, rotation);
-        Self::new(timestamp, camera_to_world.inverse())
+        // The projection stack treats +Z as "in front of the camera", so `look_at`
+        // must use the left-handed constructor to keep visible targets at positive depth.
+        Self::new(timestamp, Isometry3::look_at_lh(eye, target, up))
     }
 
     /// Get the camera-to-world transformation.
@@ -64,10 +61,10 @@ impl CameraPose {
         self.camera_to_world().translation.vector.into()
     }
 
-    /// Get the forward direction (negative Z in camera space) in world coordinates.
+    /// Get the forward direction (+Z in camera space) in world coordinates.
     pub fn forward(&self) -> Vector3<f32> {
         let c2w = self.camera_to_world();
-        c2w.rotation * Vector3::new(0.0, 0.0, -1.0)
+        c2w.rotation * Vector3::new(0.0, 0.0, 1.0)
     }
 
     /// Get the up direction (positive Y in camera space) in world coordinates.
@@ -186,5 +183,18 @@ mod tests {
         let json = serde_json::to_string(&pose).unwrap();
         let recovered: CameraPose = serde_json::from_str(&json).unwrap();
         assert!((pose.position() - recovered.position()).norm() < 1e-5);
+    }
+
+    #[test]
+    fn test_look_at_keeps_target_in_front() {
+        let eye = Point3::new(0.0, 0.0, 0.0);
+        let target = Point3::new(0.0, 0.0, 5.0);
+        let pose = CameraPose::look_at(0.0, &eye, &target, &Vector3::y());
+
+        let cam_target = pose.transform_point(&target);
+        assert!(cam_target.z > 0.0);
+        assert!(cam_target.x.abs() < 1e-5);
+        assert!(cam_target.y.abs() < 1e-5);
+        assert!((pose.forward() - Vector3::new(0.0, 0.0, 1.0)).norm() < 1e-5);
     }
 }

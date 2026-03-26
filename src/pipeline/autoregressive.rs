@@ -1,5 +1,5 @@
 use crate::backend::{BackendError, validate_backend_configuration};
-use crate::camera::CameraTrajectory;
+use crate::camera::{CameraIntrinsics, CameraTrajectory};
 use crate::diffusion::backbone::DiffusionBackbone;
 use crate::diffusion::scheduler::NoiseScheduler;
 use crate::diffusion::vae::VAE;
@@ -143,8 +143,11 @@ impl AutoregressivePipeline {
             );
 
             // Generate this window
-            let (frames, shape) = self.pipeline.generate_window(
+            let intrinsics =
+                CameraIntrinsics::default_for_resolution(self.config.width, self.config.height);
+            let (frames, shape) = self.pipeline.generate_window_with_intrinsics(
                 window_poses,
+                &intrinsics,
                 text_embedding,
                 backbone,
                 scheduler,
