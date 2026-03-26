@@ -252,6 +252,31 @@ src/
 └── tui/             Interactive terminal showcase
 ```
 
+## TUI Showcase
+
+<table>
+  <tr>
+    <td width="50%" valign="top">
+      <img src="docs/assets/img/tui-1.png" alt="Pipeline Demo tab" />
+      <p><em>Pipeline Demo: run the end-to-end synthetic rollout and inspect generated artifacts from the terminal.</em></p>
+    </td>
+    <td width="50%" valign="top">
+      <img src="docs/assets/img/tui-2.png" alt="Coverage tab" />
+      <p><em>Coverage: visualize retrieval footprint and how much of the current view is grounded by memory.</em></p>
+    </td>
+  </tr>
+  <tr>
+    <td width="50%" valign="top">
+      <img src="docs/assets/img/tui-3.png" alt="Benchmark tab" />
+      <p><em>Benchmark: inspect latency, throughput, and per-iteration pipeline statistics in one screen.</em></p>
+    </td>
+    <td width="50%" valign="top">
+      <img src="docs/assets/img/tui-4.png" alt="Memory Ops tab" />
+      <p><em>Memory Ops: exercise splice, erase, translate, and other patch-space manipulations interactively.</em></p>
+    </td>
+  </tr>
+</table>
+
 ## Testing
 
 120+ tests across unit, integration, and end-to-end coverage.
@@ -261,10 +286,6 @@ cargo test                                                 # all tests
 cargo clippy --all-targets --all-features -- -D warnings   # lint
 cargo run -- bench                                         # synthetic pipeline benchmarks
 ```
-
-## Contributing
-
-See [CONTRIBUTING.md](CONTRIBUTING.md) for workflow details and [AGENTS.md](AGENTS.md) for agent-specific context.
 
 ## Citation
 
